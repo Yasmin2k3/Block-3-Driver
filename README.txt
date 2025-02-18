@@ -1,6 +1,6 @@
 *IMPORTANT - when you make a change, make is what compiles your changes into code.
 
-HOW TO LOAD DRIVER:
+HOW DRIVER COMMANDS:
 
 This will load the driver into the kernel:
 sudo insmod <driver-name>.ko
