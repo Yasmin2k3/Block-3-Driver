@@ -7,6 +7,10 @@
 #define DEVICE_NAME "loopback" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
 
+//vendor and product ID of wacom tablet gotten from lsusb
+#define DEVICE_VENDOR_ID = 0x56a
+#define DEVICE_PRODUCT_ID = 0x033b
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin");
 MODULE_DESCRIPTION("A simple kernel module example");
@@ -29,7 +33,7 @@ static int device_release(struct inode *inode, struct file *file) {
 }
 
 //function to handle read operations
-static ssize_t device_read(strict file *file, const char __user *user_buffer, size_t len, loff_t *offset){
+static ssize_t device_read(struct file *file, const char __user *user_buffer, size_t len, loff_t *offset){
 	//determine minimum of requested length and available data
 	size_t bytes_to_read = min(len, buffer_data_size);
 	//copy data in to user space
