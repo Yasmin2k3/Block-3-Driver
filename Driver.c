@@ -3,6 +3,7 @@
 #include <linux/init.h>
 #include <linux/fs.h> //for device registration
 #include <linux/uaccess.h> //provides functions to copy data from user space
+#include <linux/proc.fs> //for proc files
 
 #define DEVICE_NAME "loopback" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
@@ -11,14 +12,26 @@
 #define DEVICE_VENDOR_ID = 0x56a
 #define DEVICE_PRODUCT_ID = 0x033b
 
+//proc file system name
+#define proc_name = "wacom-device-tablet"
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin");
-MODULE_DESCRIPTION("A simple kernel module example");
+MODULE_DESCRIPTION("Wacom tablet device driver.");
 MODULE_VERSION("1.0");
 
 static int major_number; //stores dynamic allocated major number.
 static char buffer [BUFFER_SIZE]; //internal buffer size
 static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
+static proc_entry* proc_file; //pointer that will to be /proc file
+
+static int proc_read(){}
+
+static const struct file_operations proc_fops = {
+	.owner = THIS_MODULE,
+	.open = proc_open,
+	.read = seq_read,
+};
 
 //Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
@@ -52,12 +65,26 @@ static ssize_t device_read(struct file *file, const char __user *user_buffer, si
 
 // Function called when the module is loaded
 static int __init my_module_init(void) {
+	init_proc_file();
     printk(KERN_INFO "Hello, Kernel! Module loaded.\n");
     return 0; // Return 0 means success
 }
 
+//initialize proc file
+static int init_proc_file(){
+	//creates proc file with reading access. Owner can write as well
+	 proc_file = proc_create(proc_name, 0644, NULL, proc_fops);
+	 if(proc_file == NULL){
+	 	return -ENOMEM;
+	 }
+	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
+	 return 0;
+}
 // Function called when the module is unloaded
 static void __exit my_module_exit(void) {
+	remove_proc_entry(proc_name, NULL);
+	printk(KERN_INFO "Proc file /proc/%s successfully removed.", proc_name);
+
     printk(KERN_INFO "Goodbye, Kernel! Module unloaded.\n");
 }
 
