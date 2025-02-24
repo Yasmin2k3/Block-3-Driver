@@ -29,13 +29,13 @@ static int proc_read(){
 	return 0;
 }
 
+*/
 
-static const struct file_operations proc_fops = {
+static const struct proc_file_operations proc_fops = {
 	.owner = THIS_MODULE,
 	.open = proc_open,
 	.read = seq_read,
 };
-*/
 
 static struct file_operations fops={
 	.open = device_open,
@@ -44,21 +44,6 @@ static struct file_operations fops={
 	.write = device_write,
 };
 
-static int __init loopback_init(void){
-	major_number = register_chrdev(0, DEVICE_NAME, &fops);
-	if(major_number < 0){
-		printk(KERN_ALERT "Failed to register major number\n");
-		return major_number;
-	}
-	printk(KERN_INFO "Loopback device registered with major numebr %d\n", major_number);
-
-	return 0;
-}
-
-static void __exit loopback_exit(void){
-	unregister_chrdev(major_number, DEVICE_NAME);
-	printk(KERN_INFO "Loopback device unregistered\n");
-}
 //Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
 	printk(KERN_INFO "Device opened\n");
@@ -109,7 +94,6 @@ static int __init my_module_init(void) {
     return 0; // Return 0 means success
 }
 
-/*
 //initialize proc file
 static int init_proc_file(){
 	//creates proc file with reading access. Owner can write as well
@@ -120,7 +104,7 @@ static int init_proc_file(){
 	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
 	 return 0;
 }
-*/
+
 // Function called when the module is unloaded
 static void __exit my_module_exit(void) {
 	remove_proc_entry(proc_name, NULL);
@@ -128,6 +112,24 @@ static void __exit my_module_exit(void) {
 
     printk(KERN_INFO "Goodbye, Kernel! Module unloaded.\n");
 }
+
+/*
+static int __init loopback_init(void){
+	major_number = register_chrdev(0, DEVICE_NAME, &fops);
+	if(major_number < 0){
+		printk(KERN_ALERT "Failed to register major number\n");
+		return major_number;
+	}
+	printk(KERN_INFO "Loopback device registered with major numebr %d\n", major_number);
+
+	return 0;
+}
+
+static void __exit loopback_exit(void){
+	unregister_chrdev(major_number, DEVICE_NAME);
+	printk(KERN_INFO "Loopback device unregistered\n");
+}
+*/
 
 // Register module entry and exit points
 module_init(loopback_init);
