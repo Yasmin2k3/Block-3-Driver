@@ -111,7 +111,7 @@ static int init_proc_file(){
 static void __exit my_module_exit(void) {
 	remove_proc_entry(proc_name, NULL);
 	printk(KERN_INFO "Proc file /proc/%s successfully removed.", proc_name);
-
+         // Hello world
     printk(KERN_INFO "Goodbye, Kernel! Module unloaded.\n");
 }
 
