@@ -23,16 +23,17 @@ MODULE_VERSION("1.0");
 static int major_number; //stores dynamic allocated major number.
 static char buffer [BUFFER_SIZE]; //internal buffer size
 static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
-/*
+
 static proc_entry* proc_file; //pointer that will to be /proc file
 
+/*
 static int proc_read(){
 	return 0;
 }
 
 */
 
-static const struct proc_file_operations proc_fops = {
+static const struct proc_ops proc_fops = {
 	.owner = THIS_MODULE,
 	.open = proc_open,
 	.read = seq_read,
