@@ -3,7 +3,6 @@
 #include <linux/init.h>
 #include <linux/fs.h> //for device registration
 #include <linux/uaccess.h> //provides functions to copy data from user space
-#include <linux/proc.fs> //for proc files
 
 #define DEVICE_NAME "loopback" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
@@ -23,16 +22,43 @@ MODULE_VERSION("1.0");
 static int major_number; //stores dynamic allocated major number.
 static char buffer [BUFFER_SIZE]; //internal buffer size
 static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
+/*
 static proc_entry* proc_file; //pointer that will to be /proc file
 
-static int proc_read(){}
+static int proc_read(){
+	return 0;
+}
+
 
 static const struct file_operations proc_fops = {
 	.owner = THIS_MODULE,
 	.open = proc_open,
 	.read = seq_read,
 };
+*/
 
+static struct file_operations fops={
+	.open = device_open,
+	.release = device_release,
+	.read = device_read,
+	.write = device_write,
+};
+
+static int __init loopback_init(void){
+	major_number = register_chrdev(0, DEVICE_NAME, &fops);
+	if(major_number < 0){
+		printk(KERN_ALERT "Failed to register major number\n");
+		return major_number;
+	}
+	printk(KERN_INFO "Loopback device registered with major numebr %d\n", major_number);
+
+	return 0;
+}
+
+static void __exit loopback_exit(void){
+	unregister_chrdev(major_number, DEVICE_NAME);
+	printk(KERN_INFO "Loopback device unregistered\n");
+}
 //Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
 	printk(KERN_INFO "Device opened\n");
@@ -62,6 +88,19 @@ static ssize_t device_read(struct file *file, const char __user *user_buffer, si
 }
 
 //function to handle write operations
+static ssize_t device_write(struct file *file, const char __user *user_buffer, size_t len, loff_t *offset){
+	size_t bytes_to_write = min(len, (size_t)(BUFFER_SIZE -1));
+
+	if(copy_from_user(bugger, user_buffer, bytes_to_write)){
+		return -EFAULT;
+	}
+	buffer[bytes_to_write] = '\0'; //terminates program if nothing to write
+	buffer_data_size = bytes_to_write;
+
+	printk(KERN_INFO "Device wrote %zu bytes.\n", bytes_to_write);
+
+	return bytes_to_write;
+}
 
 // Function called when the module is loaded
 static int __init my_module_init(void) {
@@ -70,6 +109,7 @@ static int __init my_module_init(void) {
     return 0; // Return 0 means success
 }
 
+/*
 //initialize proc file
 static int init_proc_file(){
 	//creates proc file with reading access. Owner can write as well
@@ -80,6 +120,7 @@ static int init_proc_file(){
 	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
 	 return 0;
 }
+*/
 // Function called when the module is unloaded
 static void __exit my_module_exit(void) {
 	remove_proc_entry(proc_name, NULL);
@@ -89,5 +130,5 @@ static void __exit my_module_exit(void) {
 }
 
 // Register module entry and exit points
-module_init(my_module_init);
-module_exit(my_module_exit);
+module_init(loopback_init);
+module_exit(loopback_exit);
