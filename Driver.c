@@ -77,7 +77,6 @@ static struct file_operations fops={
 };
 
 static struct proc_ops pops={
-//we put whatever information we want in here i believe
 };
 
 static int init_proc(void){
