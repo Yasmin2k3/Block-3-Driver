@@ -24,14 +24,6 @@ static int major_number; //stores dynamic allocated major number.
 static char buffer [BUFFER_SIZE]; //internal buffer size
 static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
 
-
-static struct file_operations fops={
-	.open = device_open,
-	.release = device_release,
-	.read = device_read,
-	.write = device_write,
-};
-
 //Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
 	printk(KERN_INFO "Device opened\n");
@@ -45,7 +37,7 @@ static int device_release(struct inode *inode, struct file *file) {
 }
 
 //function to handle read operations
-static ssize_t device_read(struct file *file, const char __user *user_buffer, size_t len, loff_t *offset){
+static ssize_t device_read(struct file *file, char __user *user_buffer, size_t len, loff_t *offset){
 	//determine minimum of requested length and available data
 	size_t bytes_to_read = min(len, buffer_data_size);
 	//copy data in to user space
@@ -56,7 +48,7 @@ static ssize_t device_read(struct file *file, const char __user *user_buffer, si
 	//refresh data in buffer
 	buffer_data_size = 0;
 	//log device upon read
-	printk(KERN_INFO "Device read %zu bytes\n" bytes_to_read);
+	printk(KERN_INFO "Device read %zu bytes\n", (size_t)bytes_to_read);
 	return bytes_to_read;
 }
 
@@ -64,20 +56,25 @@ static ssize_t device_read(struct file *file, const char __user *user_buffer, si
 static ssize_t device_write(struct file *file, const char __user *user_buffer, size_t len, loff_t *offset){
 	size_t bytes_to_write = min(len, (size_t)(BUFFER_SIZE -1));
 
-	if(copy_from_user(bugger, user_buffer, bytes_to_write)){
+	if(copy_from_user(buffer, user_buffer, bytes_to_write)){
 		return -EFAULT;
 	}
 	buffer[bytes_to_write] = '\0'; //terminates program if nothing to write
 	buffer_data_size = bytes_to_write;
 
-	printk(KERN_INFO "Device wrote %zu bytes.\n", bytes_to_write);
+	printk(KERN_INFO "Device wrote %zu bytes.\n", (size_t)bytes_to_write);
 
 	return bytes_to_write;
 }
 
+static struct file_operations fops={
+	.open = device_open,
+	.release = device_release,
+	.read = device_read,
+	.write = device_write,
+};
+
 static int __init loopback_init(void){
-
-
 	major_number = register_chrdev(0, DEVICE_NAME, &fops);
 	if(major_number < 0){
 		printk(KERN_ALERT "Failed to register major number\n");
