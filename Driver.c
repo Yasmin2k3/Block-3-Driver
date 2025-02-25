@@ -96,27 +96,21 @@ static int __init my_module_init(void) {
     return 0; // Return 0 means success
 }
 
-//initialize proc file
-static int init_proc_file(){
-	//creates proc file with reading access. Owner can write as well
-	 proc_file = proc_create(proc_name, 0644, NULL, proc_fops);
-	 if(proc_file == NULL){
-	 	return -ENOMEM;
-	 }
-	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
-	 return 0;
-}
-
 // Function called when the module is unloaded
 static void __exit my_module_exit(void) {
-	remove_proc_entry(proc_name, NULL);
-	printk(KERN_INFO "Proc file /proc/%s successfully removed.", proc_name);
-
+	
     printk(KERN_INFO "Goodbye, Kernel! Module unloaded.\n");
 }
 
-/*
+
 static int __init loopback_init(void){
+	proc_file = proc_create(proc_name, 0644, NULL, proc_fops);
+	if(proc_file == NULL){
+	 	return -ENOMEM;
+	 }
+	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
+
+
 	major_number = register_chrdev(0, DEVICE_NAME, &fops);
 	if(major_number < 0){
 		printk(KERN_ALERT "Failed to register major number\n");
@@ -128,10 +122,13 @@ static int __init loopback_init(void){
 }
 
 static void __exit loopback_exit(void){
+	remove_proc_entry(proc_name, NULL);
+	printk(KERN_INFO "Proc file /proc/%s successfully removed.", proc_name);
+
 	unregister_chrdev(major_number, DEVICE_NAME);
 	printk(KERN_INFO "Loopback device unregistered\n");
 }
-*/
+
 
 // Register module entry and exit points
 module_init(loopback_init);
