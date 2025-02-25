@@ -4,7 +4,7 @@
 #include <linux/fs.h> //for device registration
 #include <linux/uaccess.h> //provides functions to copy data from user space
 #include <linux/proc_fs.h> //for proc file
-
+//april added a comment
 #define DEVICE_NAME "loopback" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
 
@@ -94,12 +94,6 @@ static int __init my_module_init(void) {
 	init_proc_file();
     printk(KERN_INFO "Hello, Kernel! Module loaded.\n");
     return 0; // Return 0 means success
-}
-
-// Function called when the module is unloaded
-static void __exit my_module_exit(void) {
-	
-    printk(KERN_INFO "Goodbye, Kernel! Module unloaded.\n");
 }
 
 
