@@ -24,20 +24,6 @@ static int major_number; //stores dynamic allocated major number.
 static char buffer [BUFFER_SIZE]; //internal buffer size
 static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
 
-static proc_entry* proc_file; //pointer that will to be /proc file
-
-/*
-static int proc_read(){
-	return 0;
-}
-
-*/
-
-static const struct proc_ops proc_fops = {
-	.owner = THIS_MODULE,
-	.open = proc_open,
-	.read = seq_read,
-};
 
 static struct file_operations fops={
 	.open = device_open,
@@ -89,20 +75,7 @@ static ssize_t device_write(struct file *file, const char __user *user_buffer, s
 	return bytes_to_write;
 }
 
-// Function called when the module is loaded
-static int __init my_module_init(void) {
-	init_proc_file();
-    printk(KERN_INFO "Hello, Kernel! Module loaded.\n");
-    return 0; // Return 0 means success
-}
-
-
 static int __init loopback_init(void){
-	proc_file = proc_create(proc_name, 0644, NULL, proc_fops);
-	if(proc_file == NULL){
-	 	return -ENOMEM;
-	 }
-	 printk(KERN_INFO "Proc file /proc/%s successfully created.", proc_name);
 
 
 	major_number = register_chrdev(0, DEVICE_NAME, &fops);
@@ -116,8 +89,6 @@ static int __init loopback_init(void){
 }
 
 static void __exit loopback_exit(void){
-	remove_proc_entry(proc_name, NULL);
-	printk(KERN_INFO "Proc file /proc/%s successfully removed.", proc_name);
 
 	unregister_chrdev(major_number, DEVICE_NAME);
 	printk(KERN_INFO "Loopback device unregistered\n");
