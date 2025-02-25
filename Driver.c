@@ -13,7 +13,9 @@
 #define DEVICE_PRODUCT_ID = 0x033b
 
 //proc file system name
-#define proc_name = "wacom-device-tablet"
+#define proc_name "wacom-device-tablet"
+
+static struct proc_dir_entry *pentry;
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin");
@@ -74,19 +76,30 @@ static struct file_operations fops={
 	.write = device_write,
 };
 
+static struct proc_ops pops={
+//we put whatever information we want in here i believe
+};
+
 static int __init loopback_init(void){
+	pentry = proc_create(proc_name, 0644, NULL, &pops);
+	if(pentry == NULL){
+		printk(KERN_ALERT "Failed to create proc entry");
+		return -EFAULT;
+	}
+	printk(KERN_INFO "Proc file successfully created at /proc/%s", proc_name);
+
 	major_number = register_chrdev(0, DEVICE_NAME, &fops);
 	if(major_number < 0){
 		printk(KERN_ALERT "Failed to register major number\n");
 		return major_number;
 	}
-	printk(KERN_INFO "Loopback device registered with major numebr %d\n", major_number);
+	printk(KERN_INFO "Loopback device registered with major number %d\n", major_number);
 
 	return 0;
 }
 
 static void __exit loopback_exit(void){
-
+	proc_remove(pentry);
 	unregister_chrdev(major_number, DEVICE_NAME);
 	printk(KERN_INFO "Loopback device unregistered\n");
 }
