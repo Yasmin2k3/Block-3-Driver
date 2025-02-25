@@ -4,7 +4,7 @@
 #include <linux/fs.h> //for device registration
 #include <linux/uaccess.h> //provides functions to copy data from user space
 #include <linux/proc_fs.h> //for proc file
-
+//april added a comment
 #define DEVICE_NAME "loopback" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
 
