@@ -80,7 +80,7 @@ static struct proc_ops pops={
 //we put whatever information we want in here i believe
 };
 
-static int __init loopback_init(void){
+static int init_proc(void){
 	pentry = proc_create(proc_name, 0644, NULL, &pops);
 	if(pentry == NULL){
 		printk(KERN_ALERT "Failed to create proc entry");
@@ -88,6 +88,11 @@ static int __init loopback_init(void){
 	}
 	printk(KERN_INFO "Proc file successfully created at /proc/%s", proc_name);
 
+	return 0;
+}
+static int __init loopback_init(void){
+	init_proc();
+	
 	major_number = register_chrdev(0, DEVICE_NAME, &fops);
 	if(major_number < 0){
 		printk(KERN_ALERT "Failed to register major number\n");
@@ -98,8 +103,13 @@ static int __init loopback_init(void){
 	return 0;
 }
 
-static void __exit loopback_exit(void){
+static void exit_proc(void){
 	proc_remove(pentry);
+	printk(KERN_INFO "Proc file at /proc/%s removed.", proc_name);
+}
+
+static void __exit loopback_exit(void){
+	exit_proc();
 	unregister_chrdev(major_number, DEVICE_NAME);
 	printk(KERN_INFO "Loopback device unregistered\n");
 }
