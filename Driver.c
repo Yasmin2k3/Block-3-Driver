@@ -6,19 +6,19 @@
 #include <linux/proc_fs.h> //for proc file
 #include <linux/usb.h> //for usb interaction
 //april added a comment
-#define DEVICE_NAME "loopback" //name of device
+#define DEVICE_NAME "Wacom Tablet" //name of device
 #define BUFFER_SIZE 1024 //size of internal buffer
 
 //vendor and product ID of wacom tablet gotten from lsusb
-#define DEVICE_VENDOR_ID 0x56a
+#define DEVICE_VENDOR_ID 0x056a
 #define DEVICE_PRODUCT_ID 0x033b
 //last argument always has to be empty
-static struct usb_device_id my_usb_table[] = 
+static struct usb_device_id usb_table[] = 
 {
     {USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID)}, 
     {}, 
 };
-MODULE_DEVICE_TABLE(usb, my_usb_table); 
+MODULE_DEVICE_TABLE(usb, usb_table); 
 //this function is executed when the usb is put in
 static int my_usb_probe(struct usb_interface *intf, const struct usb_device_id *id) { 
       printk("The Probe function has executed");
@@ -33,7 +33,7 @@ static void my_usb_disconnect(struct usb_interface *intf) {
 static struct usb_driver my_usb_driver =
 {
     .name = "WacomDeviceDriver",
-    .id_table = my_usb_table,
+    .id_table = usb_table,
     .probe = my_usb_probe,
     .disconnect = my_usb_disconnect
 };
@@ -106,7 +106,7 @@ static int __init loopback_init(void){
 		printk(KERN_ALERT "Failed to register major number\n");
 		return major_number;
 	}
-	printk(KERN_INFO "Loopback device registered with major numebr %d\n", major_number);
+	printk(KERN_INFO "%s device registered with major numebr %d\n", DEVICE_NAME, major_number);
 	usb_result = usb_register(&my_usb_driver);
 	if(usb_result){
 	    printk("error loading register");
@@ -119,8 +119,8 @@ static int __init loopback_init(void){
 static void __exit loopback_exit(void){
 
 	unregister_chrdev(major_number, DEVICE_NAME);
-	printk(KERN_INFO "Loopback device unregistered\n");
-	usb_deregister(&my_usb_driver);
+	printk(KERN_INFO "%s device unregistered\n", DEVICE_NAME);
+	usb_deregister(&usb_driver);
 }
 
 
