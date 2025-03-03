@@ -142,6 +142,14 @@ static int __init wacom_init(void) {
         return PTR_ERR(tabletClass);
     }
 
+
+	//please
+	cdev_init(&dev_data.cdev, &fops);
+	dev_data.cdev.owner = THIS_MODULE;
+	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
+	
+    printk(KERN_INFO "Daaaaaaaaaaevice node created at /dev/%s\n", DEVICE_NAME);
+
     // Automatically create the device node in /dev
     tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
     if (IS_ERR(tabletDevice)) {
@@ -150,14 +158,6 @@ static int __init wacom_init(void) {
         printk(KERN_ALERT "Failed to create the device\n");
         return PTR_ERR(tabletDevice);
     }
-
-	//please
-	cdev_init(&dev_data.cdev, &fops);
-	dev_data.cdev.owner = THIS_MODULE;
-	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
-	device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
-	
-    printk(KERN_INFO "Daaaaaaaaaaevice node created at /dev/%s\n", DEVICE_NAME);
 
     // Register the input device
     result = register_input_device();
