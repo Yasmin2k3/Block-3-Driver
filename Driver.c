@@ -1,110 +1,166 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/fs.h> //for device registration
-#include <linux/uaccess.h> //provides functions to copy data from user space
-#include <linux/proc_fs.h> //for proc file
-//april added a comment
-#define DEVICE_NAME "loopback" //name of device
-#define BUFFER_SIZE 1024 //size of internal buffer
+#include <linux/fs.h> // for device registration
+#include <linux/uaccess.h> // provides functions to copy data from user space
+#include <linux/proc_fs.h> // for proc file
+#include <linux/device.h>
+#include <linux/input.h> // input device handling
+#include <linux/cdev.h>
 
-//vendor and product ID of wacom tablet gotten from lsusb
-#define DEVICE_VENDOR_ID = 0x56a
-#define DEVICE_PRODUCT_ID = 0x033b
+#define DEVICE_NAME "wacom-tablet" // name of device
+#define BUFFER_SIZE 1024 // size of internal buffer
 
-//proc file system name
-#define proc_name "wacom-device-tablet"
-
-static struct proc_dir_entry *pentry;
+// vendor and product ID of Wacom tablet gotten from lsusb
+#define DEVICE_VENDOR_ID 0x056a
+#define DEVICE_PRODUCT_ID 0x033b
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Yasmin");
+MODULE_AUTHOR("Yasmin, David, Waleed and April");
 MODULE_DESCRIPTION("Wacom tablet device driver.");
 MODULE_VERSION("1.0");
 
-static int major_number; //stores dynamic allocated major number.
-static char buffer [BUFFER_SIZE]; //internal buffer size
-static size_t buffer_data_size = 0; //keeps track of how much data is stored in the buffer
+static int major_number; // stores allocated major number
+static char buffer[BUFFER_SIZE]; // internal buffer size
+static size_t buffer_data_size = 0; // keeps track of how much data is stored in the buffer
 
-//Shows that device is opened in kernel
+// Input device structure
+static struct input_dev *tablet_input_dev = NULL;
+
+// Pointers for device creation
+static struct class *tabletClass = NULL;
+static struct device *tabletDevice = NULL;
+
+// Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
-	printk(KERN_INFO "Device opened\n");
-	return 0;
+    printk(KERN_INFO "Device opened\n");
+    return 0;
 }
 
-//Shows that device is released in kernel
+// Shows that device is released in kernel
 static int device_release(struct inode *inode, struct file *file) {
-	printk(KERN_INFO "Device released\n");
-	return 0;
+    printk(KERN_INFO "Device released\n");
+    return 0;
 }
 
-//function to handle read operations
-static ssize_t device_read(struct file *file, char __user *user_buffer, size_t len, loff_t *offset){
-	//determine minimum of requested length and available data
-	size_t bytes_to_read = min(len, buffer_data_size);
-	//copy data in to user space
-	if (copy_to_user(user_buffer, buffer, bytes_to_read)) {
-		//if buffer is too big to copy to user
-		return -EFAULT;
-	}
-	//refresh data in buffer
-	buffer_data_size = 0;
-	//log device upon read
-	printk(KERN_INFO "Device read %zu bytes\n", (size_t)bytes_to_read);
-	return bytes_to_read;
+// Function to handle read operations
+static ssize_t device_read(struct file *file, char __user *user_buffer, size_t len, loff_t *offset) {
+    size_t bytes_to_read = min(len, buffer_data_size);
+    if (copy_to_user(user_buffer, buffer, bytes_to_read)) {
+        return -EFAULT;
+    }
+
+    printk(KERN_INFO "Device read %zu bytes\n", bytes_to_read);
+    return bytes_to_read;
 }
 
-//function to handle write operations
-static ssize_t device_write(struct file *file, const char __user *user_buffer, size_t len, loff_t *offset){
-	size_t bytes_to_write = min(len, (size_t)(BUFFER_SIZE -1));
-
-	if(copy_from_user(buffer, user_buffer, bytes_to_write)){
-		return -EFAULT;
-	}
-	buffer[bytes_to_write] = '\0'; //terminates program if nothing to write
-	buffer_data_size = bytes_to_write;
-
-	printk(KERN_INFO "Device wrote %zu bytes.\n", (size_t)bytes_to_write);
-
-	return bytes_to_write;
-}
-
-static struct file_operations fops={
-	.open = device_open,
-	.release = device_release,
-	.read = device_read,
-	.write = device_write,
+static struct file_operations fops = {
+    .open = device_open,
+    .release = device_release,
+    .read = device_read,
 };
 
-static struct proc_ops pops={
-//we put whatever information we want in here i believe
-};
+// Function to register the input device
+static int register_input_device(void) {
+    int error;
 
-static int __init loopback_init(void){
-	pentry = proc_create(proc_name, 0644, NULL, &pops);
-	if(pentry == NULL){
-		printk(KERN_ALERT "Failed to create proc entry");
-		return -EFAULT;
-	}
-	printk(KERN_INFO "Proc file successfully created at /proc/%s", proc_name);
+    // Allocate memory for the input device
+    tablet_input_dev = input_allocate_device();
+    if (!tablet_input_dev) {
+        printk(KERN_ALERT "Failed to allocate input device\n");
+        return -ENOMEM;
+    }
 
-	major_number = register_chrdev(0, DEVICE_NAME, &fops);
-	if(major_number < 0){
-		printk(KERN_ALERT "Failed to register major number\n");
-		return major_number;
-	}
-	printk(KERN_INFO "Loopback device registered with major number %d\n", major_number);
+    tablet_input_dev->name = "Wacom Tablet Input Device";
+    tablet_input_dev->id.bustype = BUS_USB; // Set to USB bus type
+    tablet_input_dev->evbit[0] = BIT(EV_ABS) | BIT(EV_KEY); // Handle ABS events (coordinates), key events (buttons)
+    input_set_abs_params(tablet_input_dev, ABS_X, 0, 10000, 0, 0); // X axis
+    input_set_abs_params(tablet_input_dev, ABS_Y, 0, 10000, 0, 0); // Y axis
+    input_set_abs_params(tablet_input_dev, ABS_PRESSURE, 0, 255, 0, 0); // Pressure levels
 
-	return 0;
+    // Register the input device
+    error = input_register_device(tablet_input_dev);
+    if (error) {
+        printk(KERN_ALERT "Failed to register input device\n");
+        input_free_device(tablet_input_dev);
+        return error;
+    }
+
+    printk(KERN_INFO "Input device registered\n");
+    return 0;
 }
 
-static void __exit loopback_exit(void){
-	proc_remove(pentry);
-	unregister_chrdev(major_number, DEVICE_NAME);
-	printk(KERN_INFO "Loopback device unregistered\n");
+// Function to unregister the input device
+static void unregister_input_device(void) {
+    if (tablet_input_dev) {
+        input_unregister_device(tablet_input_dev);
+        input_free_device(tablet_input_dev);
+        printk(KERN_INFO "Input device unregistered\n");
+    }
 }
 
+// Initialization function
+static int __init wacom_init(void) {
+    int result;
+    dev_t dev;
+
+    // Register the character device
+    major_number = register_chrdev(0, DEVICE_NAME, &fops);
+    if (major_number < 0) {
+        printk(KERN_ALERT "Failed to register major number\n");
+        return major_number;
+    }
+    printk(KERN_INFO "%s device registered with major number %d\n", DEVICE_NAME, major_number);
+
+    // Create the device class
+    tabletClass = class_create("wacom_tablet_class");
+    if (IS_ERR(tabletClass)) {
+        unregister_chrdev(major_number, DEVICE_NAME);
+        printk(KERN_ALERT "Failed to register device class\n");
+        return PTR_ERR(tabletClass);
+    }
+
+		//STUPID FUNCTION
+		//im so tired but here's a cool thing I think will help: https://olegkutkov.me/2018/03/14/simple-linux-character-device-driver/
+		//I'll work on this later
+		//cdev_init
+		//cdev_add(THIS_MODULE, MKDEV(major_number, 0), 1);
+
+    // Automatically create the device node in /dev
+    tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
+    if (IS_ERR(tabletDevice)) {
+        class_destroy(tabletClass);
+        unregister_chrdev(major_number, DEVICE_NAME);
+        printk(KERN_ALERT "Failed to create the device\n");
+        return PTR_ERR(tabletDevice);
+    }
+
+    printk(KERN_INFO "Device node created at /dev/%s\n", DEVICE_NAME);
+
+    // Register the input device
+    result = register_input_device();
+    if (result) {
+        device_destroy(tabletClass, MKDEV(major_number, 0));
+        class_destroy(tabletClass);
+        unregister_chrdev(major_number, DEVICE_NAME);
+        return result;
+    }
+
+    return 0;
+}
+
+// Exit function
+static void __exit wacom_exit(void) {
+    unregister_input_device();
+
+    device_destroy(tabletClass, MKDEV(major_number, 0));
+    class_destroy(tabletClass);
+    unregister_chrdev(major_number, DEVICE_NAME);
+
+    printk(KERN_INFO "Device unregistered\n");
+}
 
 // Register module entry and exit points
-module_init(loopback_init);
-module_exit(loopback_exit);
+module_init(wacom_init);
+module_exit(wacom_exit);
+
