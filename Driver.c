@@ -24,6 +24,8 @@ static size_t buffer_data_size = 0; // keeps track of how much data is stored in
 // Input device structure
 static struct input_dev *tablet_input_dev = NULL;
 
+static struct proc_dir_entry *pentry;
+
 // Pointers for device creation
 static struct class *tabletClass = NULL;
 static struct device *tabletDevice = NULL;
@@ -107,12 +109,12 @@ static struct proc_ops pops={
 };
 
 static int init_proc(void){
-	pentry = proc_create(proc_name, 0644, NULL, &pops);
+	pentry = proc_create(DEVICE_NAME, 0644, NULL, &pops);
 	if(pentry == NULL){
 		printk(KERN_ALERT "Failed to create proc entry");
 		return -EFAULT;
 	}
-	printk(KERN_INFO "Proc file successfully created at /proc/%s", proc_name);
+	printk(KERN_INFO "Proc file successfully created at /proc/%s", DEVICE_NAME);
 
 	return 0;
 }
@@ -172,12 +174,12 @@ static int __init wacom_init(void) {
 
 static void exit_proc(void){
 	proc_remove(pentry);
-	printk(KERN_INFO "Proc file at /proc/%s removed.", proc_name);
+	printk(KERN_INFO "Proc file at /proc/%s removed.", DEVICE_NAME);
 }
 // Exit function
 static void __exit wacom_exit(void) {
     unregister_input_device();
-    exit_proc
+    exit_proc();
 
     device_destroy(tabletClass, MKDEV(major_number, 0));
     class_destroy(tabletClass);
