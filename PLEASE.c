@@ -34,28 +34,6 @@ void test_character_device() {
     close(fd);
 }
 
-// Function to test writing to the character device
-void test_character_device_write() {
-    int fd;
-    const char *data = "Test data to write to device";
-
-    fd = open(DEVICE_NAME, O_WRONLY);
-    if (fd == -1) {
-        perror("Failed to open character device");
-        return;
-    }
-
-    printf("Writing to character device...\n");
-    ssize_t bytes_written = write(fd, data, strlen(data));
-    if (bytes_written == -1) {
-        perror("Failed to write data to device");
-    } else {
-        printf("Written %zd bytes to character device\n", bytes_written);
-    }
-
-    close(fd);
-}
-
 // Function to test listening to input events from the tablet
 void test_input_device() {
     int fd;
@@ -100,7 +78,6 @@ void test_input_device() {
 
 int main() {
     // Test the character device read/write functionality
-    test_character_device_write(); // Write test
     test_character_device(); // Read test
 
     // Test the input device for tablet touch events
