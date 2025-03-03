@@ -102,8 +102,23 @@ static void unregister_input_device(void) {
     }
 }
 
+
+static struct proc_ops pops={
+};
+
+static int init_proc(void){
+	pentry = proc_create(proc_name, 0644, NULL, &pops);
+	if(pentry == NULL){
+		printk(KERN_ALERT "Failed to create proc entry");
+		return -EFAULT;
+	}
+	printk(KERN_INFO "Proc file successfully created at /proc/%s", proc_name);
+
+	return 0;
+}
 // Initialization function
 static int __init wacom_init(void) {
+    init_proc();
     int result;
     dev_t dev;
 
@@ -154,9 +169,15 @@ static int __init wacom_init(void) {
     return 0;
 }
 
+
+static void exit_proc(void){
+	proc_remove(pentry);
+	printk(KERN_INFO "Proc file at /proc/%s removed.", proc_name);
+}
 // Exit function
 static void __exit wacom_exit(void) {
     unregister_input_device();
+    exit_proc
 
     device_destroy(tabletClass, MKDEV(major_number, 0));
     class_destroy(tabletClass);
