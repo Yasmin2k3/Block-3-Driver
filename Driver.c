@@ -11,9 +11,6 @@
 #define DEVICE_NAME "wacom-tablet" // name of device
 #define BUFFER_SIZE 1024 // size of internal buffer
 
-// vendor and product ID of Wacom tablet gotten from lsusb
-#define DEVICE_VENDOR_ID 0x056a
-#define DEVICE_PRODUCT_ID 0x033b
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin, David, Waleed and April");
@@ -118,14 +115,6 @@ static int __init wacom_init(void) {
 		return result;
 	}
 
-/*
-    // Register the character device
-    major_number = register_chrdev(0, DEVICE_NAME, &fops);
-    if (major_number < 0) {
-        printk(KERN_ALERT "Failed to register major number\n");
-        return major_number;
-    }
-	*/
     printk(KERN_INFO "%s device registered with major number %d\n", DEVICE_NAME, major_number);
 	
     // Create the device class
@@ -135,9 +124,6 @@ static int __init wacom_init(void) {
         printk(KERN_ALERT "Failed to register device class\n");
         return PTR_ERR(tabletClass);
     }
-
-		//STUPID FUNCTION
-		//im so tired but here's a cool thing I think will help: https://olegkutkov.me/2018/03/14/simple-linux-character-device-driver/		//cdev_add(THIS_MODULE, MKDEV(major_number, 0), 1);
 
     // Automatically create the device node in /dev
     tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
@@ -154,7 +140,7 @@ static int __init wacom_init(void) {
 	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
 	device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
 	
-    printk(KERN_INFO "Device node created at /dev/%s\n", DEVICE_NAME);
+    printk(KERN_INFO "Daaaaaaaaaaevice node created at /dev/%s\n", DEVICE_NAME);
 
     // Register the input device
     result = register_input_device();
