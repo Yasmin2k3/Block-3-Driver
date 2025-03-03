@@ -31,6 +31,12 @@ static struct input_dev *tablet_input_dev = NULL;
 static struct class *tabletClass = NULL;
 static struct device *tabletDevice = NULL;
 
+struct device_data {
+	struct cdev cdev;
+};
+
+static struct device_data dev_data;
+
 // Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
     printk(KERN_INFO "Device opened\n");
@@ -104,14 +110,24 @@ static int __init wacom_init(void) {
     int result;
     dev_t dev;
 
+	result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
+	major_number = MAJOR(dev);
+
+	if(major_number < 0){
+		printk(KERN_ALERT "Failed to register major number");
+		return result;
+	}
+
+/*
     // Register the character device
     major_number = register_chrdev(0, DEVICE_NAME, &fops);
     if (major_number < 0) {
         printk(KERN_ALERT "Failed to register major number\n");
         return major_number;
     }
+	*/
     printk(KERN_INFO "%s device registered with major number %d\n", DEVICE_NAME, major_number);
-
+	
     // Create the device class
     tabletClass = class_create("wacom_tablet_class");
     if (IS_ERR(tabletClass)) {
@@ -121,10 +137,7 @@ static int __init wacom_init(void) {
     }
 
 		//STUPID FUNCTION
-		//im so tired but here's a cool thing I think will help: https://olegkutkov.me/2018/03/14/simple-linux-character-device-driver/
-		//I'll work on this later
-		//cdev_init
-		//cdev_add(THIS_MODULE, MKDEV(major_number, 0), 1);
+		//im so tired but here's a cool thing I think will help: https://olegkutkov.me/2018/03/14/simple-linux-character-device-driver/		//cdev_add(THIS_MODULE, MKDEV(major_number, 0), 1);
 
     // Automatically create the device node in /dev
     tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
@@ -135,6 +148,12 @@ static int __init wacom_init(void) {
         return PTR_ERR(tabletDevice);
     }
 
+	//please
+	cdev_init(&dev_data.cdev, &fops);
+	dev_data.cdev.owner = THIS_MODULE;
+	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
+	device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
+	
     printk(KERN_INFO "Device node created at /dev/%s\n", DEVICE_NAME);
 
     // Register the input device
