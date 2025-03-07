@@ -7,10 +7,15 @@
 #include <linux/device.h>
 #include <linux/input.h> // input device handling
 #include <linux/cdev.h>
+#include <linux/usb.h>
 
 #define DEVICE_NAME "wacom-tablet" // name of device
 #define BUFFER_SIZE 1024 // size of internal buffer
 
+#define DEVICE_VENDOR_ID 0x056a
+//temp for yasmin whilst working on the other tablet
+#define DEVICE_PRODUCT_ID 0x0357
+//#define DEVICE_PRODUCT_ID 0x033b
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin, David, Waleed and April");
@@ -35,6 +40,8 @@ struct device_data {
 };
 
 static struct device_data dev_data;
+
+//FILE OPERATIONS-----------------------------------------------------------------------------------------
 
 // Shows that device is opened in kernel
 static int device_open(struct inode *inode, struct file *file) {
@@ -64,7 +71,38 @@ static struct file_operations fops = {
     .release = device_release,
     .read = device_read,
 };
+//-----------------------------------------------------------------------------------------------------
 
+//USB DEVICE STUFF-------------------------------------------------------------------------------------
+//last argument always has to be empty
+static struct usb_device_id my_usb_table[] = 
+{
+    {USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID)}, 
+    {}, 
+};
+MODULE_DEVICE_TABLE(usb, my_usb_table); 
+//this function is executed when the usb is put in
+static int my_usb_probe(struct usb_interface *intf, const struct usb_device_id *id) { 
+      printk("WacomDriver - The Probe function has executed\n");
+      return 0; 
+}
+//this function is executed when the usb is ejected out 
+static void my_usb_disconnect(struct usb_interface *intf) { 
+      printk("WacomDriver - The Exit function has executed\n");
+      
+       
+}
+static struct usb_driver my_usb_driver =
+{
+    .name = "WacomDeviceDriver",
+    .id_table = my_usb_table,
+    .probe = my_usb_probe,
+    .disconnect = my_usb_disconnect,
+    .supports_autosuspend = 1
+};
+//---------------------------------------------------------------------------------------
+
+//INPUT DEVICE STUFF---------------------------------------------------------------------
 // Function to register the input device
 static int register_input_device(void) {
     int error;
@@ -103,8 +141,9 @@ static void unregister_input_device(void) {
         printk(KERN_INFO "Input device unregistered\n");
     }
 }
+//---------------------------------------------------------------------------------------------------
 
-
+//PROC STUFF-----------------------------------------------------------------------------------------
 static struct proc_ops pops={
 };
 
@@ -118,11 +157,14 @@ static int init_proc(void){
 
 	return 0;
 }
+//-----------------------------------------------------------------------------------------------------
+
 // Initialization function
 static int __init wacom_init(void) {
     init_proc();
     int result;
     dev_t dev;
+	int usb_result;
 
 	result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
 	major_number = MAJOR(dev);
@@ -148,7 +190,7 @@ static int __init wacom_init(void) {
 	dev_data.cdev.owner = THIS_MODULE;
 	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
 	
-    printk(KERN_INFO "Daaaaaaaaaaevice node created at /dev/%s\n", DEVICE_NAME);
+    printk(KERN_INFO "Device node created at /dev/%s\n", DEVICE_NAME);
 
     // Automatically create the device node in /dev
     tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
@@ -168,6 +210,8 @@ static int __init wacom_init(void) {
         return result;
     }
 
+	usb_result = usb_register(&my_usb_driver);
+
     return 0;
 }
 
@@ -184,6 +228,9 @@ static void __exit wacom_exit(void) {
     device_destroy(tabletClass, MKDEV(major_number, 0));
     class_destroy(tabletClass);
     unregister_chrdev(major_number, DEVICE_NAME);
+
+	usb_deregister(&my_usb_driver);
+
 
     printk(KERN_INFO "Device unregistered\n");
 }
