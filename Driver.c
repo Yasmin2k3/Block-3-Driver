@@ -211,6 +211,10 @@ static int __init wacom_init(void) {
     }
 
 	usb_result = usb_register(&my_usb_driver);
+	if (usb_result) {
+    	printk(KERN_ALERT "USB driver registration failed.\n");
+		return -EFAULT;
+	}
 
     return 0;
 }
