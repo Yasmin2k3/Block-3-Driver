@@ -35,6 +35,7 @@ static struct proc_dir_entry *pentry;
 static struct class *tabletClass = NULL;
 static struct device *tabletDevice = NULL;
 
+//gives our device an inbuilt Linux character device structure
 struct device_data {
 	struct cdev cdev;
 };
@@ -72,35 +73,6 @@ static struct file_operations fops = {
     .read = device_read,
 };
 //-----------------------------------------------------------------------------------------------------
-
-//USB DEVICE STUFF-------------------------------------------------------------------------------------
-//last argument always has to be empty
-static struct usb_device_id my_usb_table[] = 
-{
-    {USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID)}, 
-    {}, 
-};
-MODULE_DEVICE_TABLE(usb, my_usb_table); 
-//this function is executed when the usb is put in
-static int my_usb_probe(struct usb_interface *intf, const struct usb_device_id *id) { 
-      printk("WacomDriver - The Probe function has executed\n");
-      return 0; 
-}
-//this function is executed when the usb is ejected out 
-static void my_usb_disconnect(struct usb_interface *intf) { 
-      printk("WacomDriver - The Exit function has executed\n");
-      
-       
-}
-static struct usb_driver my_usb_driver =
-{
-    .name = "WacomDeviceDriver",
-    .id_table = my_usb_table,
-    .probe = my_usb_probe,
-    .disconnect = my_usb_disconnect,
-    .supports_autosuspend = 1
-};
-//---------------------------------------------------------------------------------------
 
 //INPUT DEVICE STUFF---------------------------------------------------------------------
 // Function to register the input device
@@ -157,21 +129,36 @@ static int init_proc(void){
 
 	return 0;
 }
-//-----------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------------
 
-// Initialization function
-static int __init wacom_init(void) {
-    init_proc();
-    int result;
+
+//USB DEVICE STUFF-------------------------------------------------------------------------------------
+//last argument always has to be empty
+static struct usb_device_id my_usb_table[] = 
+{
+    {USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID)}, 
+    {}, 
+};
+MODULE_DEVICE_TABLE(usb, my_usb_table); 
+
+/**wacom_usb_probe() - initializes when device is plugged in
+@intf: USB interface
+@id: USB device id
+
+Putting some initializations here means that we don't need to use up space if the device isn't plugged in.
+*/
+static int wacom_usb_probe(struct usb_interface *intf, const struct usb_device_id *id) { 	
+    int chrdev_result;
+	int result;
     dev_t dev;
-	int usb_result;
 
-	result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
+	chrdev_result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
+
 	major_number = MAJOR(dev);
 
 	if(major_number < 0){
 		printk(KERN_ALERT "Failed to register major number");
-		return result;
+		return major_number;
 	}
 
     printk(KERN_INFO "%s device registered with major number %d\n", DEVICE_NAME, major_number);
@@ -185,7 +172,7 @@ static int __init wacom_init(void) {
     }
 
 
-	//please
+	//initializes character device and connects it with our major number
 	cdev_init(&dev_data.cdev, &fops);
 	dev_data.cdev.owner = THIS_MODULE;
 	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
@@ -210,6 +197,35 @@ static int __init wacom_init(void) {
         return result;
     }
 
+    printk("WacomDriver - The Probe function has executed\n");
+    return 0; 
+}
+
+
+//this function is executed when the usb is ejected out 
+static void wacom_usb_disconnect(struct usb_interface *intf) { 
+      printk("WacomDriver - The Exit function has executed\n");
+      
+       
+}
+static struct usb_driver my_usb_driver =
+{
+    .name = "WacomDeviceDriver",
+    .id_table = my_usb_table,
+    .probe = wacom_usb_probe,
+    .disconnect = wacom_usb_disconnect,
+    .supports_autosuspend = 1
+};
+//---------------------------------------------------------------------------------------
+
+/** wacom_init() - initializes device node, proc file, usb and character device for our driver.
+*/
+static int __init wacom_init(void) {
+	int usb_result;
+
+	//initializes proc file
+    init_proc();
+	
 	usb_result = usb_register(&my_usb_driver);
 	if (usb_result) {
     	printk(KERN_ALERT "USB driver registration failed.\n");
