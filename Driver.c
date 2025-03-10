@@ -85,7 +85,7 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
 {
 	size_t bytes_to_read;
 	int ret;
-
+	//spinlock not good, chenge it to something else later.
 	spin_lock(&buffer_lock);
 	bytes_to_read = min(len, buffer_data_size);
 	if (bytes_to_read == 0) {
@@ -205,6 +205,7 @@ static void wacom_usb_read_callback(struct urb *urb)
 		}
 		input_sync(tablet_input_dev);
 
+		//change later methinks
 		/* Optionally, log the button mask to the internal buffer */
 		spin_lock(&buffer_lock);
 		{
