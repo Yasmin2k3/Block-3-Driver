@@ -7,9 +7,18 @@
 #include <linux/mutex.h>
 #include <linux/uaccess.h>
 
-#define DEVICE_NAME "tablet_buttons"
+#define DEVICE_NAME "wacom_tablet"
 #define CLASS_NAME "tablet"
-#define BUF_SIZE 1024  // total size of our message buffer
+#define BUF_SIZE 1024  
+
+#define DEVICE_VENDOR_ID 0x056a
+#define DEVICE_PRODUCT_ID 0x0357
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Yasmin, David, Waleed and April");
+MODULE_DESCRIPTION("Wacom tablet driver with URB-based asynchronous reads and numbered buttons.");
+MODULE_VERSION("1.0");
+
 
 static int major;
 static struct class *tablet_class = NULL;
@@ -135,7 +144,7 @@ static int __init tablet_init(void)
     }
 
     // Create a device class and device node in /dev.
-    tablet_class = class_create(THIS_MODULE, CLASS_NAME);
+    tablet_class = class_create("wacom_tablet_class");
     if (IS_ERR(tablet_class)) {
         cdev_del(&tablet_cdev);
         unregister_chrdev_region(dev, 1);
