@@ -5,7 +5,9 @@
 #include <linux/device.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
+#include <linux/interrupt.h>
 #include <linux/uaccess.h>
+
 
 #define DEVICE_NAME "wacom_tablet"
 #define CLASS_NAME "tablet"
@@ -19,7 +21,6 @@ MODULE_AUTHOR("Yasmin, David, Waleed and April");
 MODULE_DESCRIPTION("Wacom tablet driver with URB-based asynchronous reads and numbered buttons.");
 MODULE_VERSION("1.0");
 
-
 static int major;
 static struct class *tablet_class = NULL;
 static struct device *tablet_device = NULL;
@@ -28,6 +29,11 @@ static struct cdev tablet_cdev;
 static char *msg_buffer;    // buffer to store messages
 static int buffer_offset = 0;  // current length of data in the buffer
 static DEFINE_MUTEX(buffer_mutex);  // protects our buffer
+
+static int irq_num = 10;
+module_param(irq_num, int, 0444);
+MODULE_PARM_DESC(irq_num, "IRQ number for the drawing tablet button device");
+
 
 /*
  * tablet_read - Called when a userspace process reads from our device node.
@@ -52,6 +58,7 @@ static ssize_t tablet_read(struct file *file, char __user *buf, size_t count, lo
     *offset += count;
     mutex_unlock(&buffer_mutex);
     return count;
+
 }
 
 /*
@@ -83,31 +90,40 @@ static struct file_operations fops = {
  */
 static void clear_buffer(void)
 {
-    mutex_lock(&buffer_mutex);
     buffer_offset = 0;
     memset(msg_buffer, 0, BUF_SIZE);
-    mutex_unlock(&buffer_mutex);
 }
 
 /*
- * simulate_button_press - Simulates a button press event from the drawing tablet.
- * In a real driver, this would be called by the hardware event handler.
- * The function appends "button X pressed" to the internal buffer.
+ * tablet_irq_handler - The primary (top-half) IRQ handler.
+ * It simply defers processing to the threaded handler.
  */
-static void simulate_button_press(int button)
+static irqreturn_t tablet_irq_handler(int irq, void *dev_id)
 {
+    return IRQ_WAKE_THREAD;
+}
+
+/*
+ * tablet_irq_thread - Threaded IRQ handler.
+ * This function is executed in process context, so it's safe to use a mutex.
+ * In a real driver, read hardware registers to determine which button was pressed.
+ */
+static irqreturn_t tablet_irq_thread(int irq, void *dev_id)
+{
+    int button = 1; // Replace with actual hardware register reading.
     char temp[64];
     int len;
 
     mutex_lock(&buffer_mutex);
     len = snprintf(temp, sizeof(temp), "button %d pressed\n", button);
-    // If adding the new message would exceed our buffer, clear it first.
     if (buffer_offset + len >= BUF_SIZE)
         clear_buffer();
     memcpy(msg_buffer + buffer_offset, temp, len);
     buffer_offset += len;
     mutex_unlock(&buffer_mutex);
+    return IRQ_HANDLED;
 }
+
 
 /*
  * tablet_init - Module initialisation.
@@ -160,13 +176,25 @@ static int __init tablet_init(void)
         return PTR_ERR(tablet_device);
     }
 
-    // For demonstration, simulate a few button press events.
-    simulate_button_press(1);
-    simulate_button_press(2);
-    simulate_button_press(3);
+    /*
+     * Register a threaded IRQ handler.
+     * The primary handler defers processing to tablet_irq_thread, which runs in process context.
+     */
+    ret = request_threaded_irq(irq_num, tablet_irq_handler, tablet_irq_thread,
+                               IRQF_TRIGGER_RISING | IRQF_ONESHOT, "tablet_button", NULL);
+    if (ret) {
+        printk(KERN_ERR "Failed to request IRQ %d\n", irq_num);
+        device_destroy(tablet_class, dev);
+        class_destroy(tablet_class);
+        cdev_del(&tablet_cdev);
+        unregister_chrdev_region(dev, 1);
+        kfree(msg_buffer);
+        return ret;
+    }
 
-    printk(KERN_INFO "Tablet buttons driver initialised with major %d\n", major);
+    printk(KERN_INFO "Tablet buttons driver initialised with major %d and IRQ %d\n", major, irq_num);
     return 0;
+
 }
 
 /*
@@ -176,6 +204,7 @@ static int __init tablet_init(void)
 static void __exit tablet_exit(void)
 {
     dev_t dev = MKDEV(major, 0);
+    free_irq(irq_num, NULL);
     device_destroy(tablet_class, dev);
     class_destroy(tablet_class);
     cdev_del(&tablet_cdev);
@@ -186,7 +215,3 @@ static void __exit tablet_exit(void)
 
 module_init(tablet_init);
 module_exit(tablet_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("A simple input device driver for drawing tablet buttons");
