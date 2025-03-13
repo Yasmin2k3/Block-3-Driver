@@ -7,12 +7,11 @@
 #include <linux/device.h>
 #include <linux/input.h>           // input device handling
 #include <linux/cdev.h>
-#include <linux/usb.h>
-#include <linux/mutex.h>           // for mutexes
-#include <linux/printk.h>
-#include <linux/workqueue.h>       // for deferred work
+#include <linux/usb.h>        // for mutexes
+#include <linux/printk.h>      // for deferred work
+#include <linux/hid.h> //for usbhid
 
-#define DEVICE_NAME "ISE_mouse"
+#define DEVICE_NAME "ISE_mouse_driver"
 #define BUFFER_SIZE 1024
 #define URB_BUFFER_SIZE 64
 
@@ -29,8 +28,8 @@ static int major_number;
 static char buffer[BUFFER_SIZE];
 static size_t buffer_data_size = 0;
 static struct proc_dir_entry *pentry = NULL;
-static struct class *tabletClass = NULL;
-static struct device *tabletDevice = NULL;
+static struct class *mouse_class = NULL;
+static struct device *mouse_device = NULL;
 struct device_data {
 	struct cdev cdev;
 };
@@ -105,32 +104,39 @@ static void exit_proc(void)
 	printk(KERN_INFO "Proc file /proc/%s removed\n", DEVICE_NAME);
 }
 
-/* USB device table */
-static struct usb_device_id my_usb_table[] = {
-	{ USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID) },
+/* HID device table. This should be more specific than the usbhid driver. (please)*/
+static struct hid_device_id mouse_hid_table[] = {
+	{ HID_USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID) },
 	{ },
 };
-MODULE_DEVICE_TABLE(usb, my_usb_table);
+MODULE_DEVICE_TABLE(hid, mouse_hid_table);
 
-/* Probe function: sets up the character device, registers the input device, and submits the URB */
-static int wacom_usb_probe(struct usb_interface *intf, const struct usb_device_id *id)
+/*
+* mouse_usb_probe Initializes  USB driver.
+*
+* This is only called when it detects a usb with our vendor and product ID.
+*/
+static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
-	int chrdev_result, result;
+	int chrdev_result;
 	dev_t dev;
 
+ //Dynamically allocates a region in memory for our character device.
 	chrdev_result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
 	major_number = MAJOR(dev);
+	//Error handling
 	if (major_number < 0) {
 		printk(KERN_ALERT "Failed to register major number\n");
 		return major_number;
 	}
 	printk(KERN_INFO "%s device registered with major number %d\n", DEVICE_NAME, major_number);
 
-	tabletClass = class_create("mouse_class");
-	if (IS_ERR(tabletClass)) {
+  //Creates a 
+	mouse_class = class_create("mouse_class");
+	if (IS_ERR(mouse_class)) {
 		unregister_chrdev(major_number, DEVICE_NAME);
 		printk(KERN_ALERT "Failed to register device class\n");
-		return PTR_ERR(tabletClass);
+		return PTR_ERR(mouse_class);
 	}
 
 	cdev_init(&dev_data.cdev, &fops);
@@ -138,56 +144,63 @@ static int wacom_usb_probe(struct usb_interface *intf, const struct usb_device_i
 	cdev_add(&dev_data.cdev, MKDEV(major_number, 0), 1);
 	printk(KERN_INFO "Device node created at /dev/%s\n", DEVICE_NAME);
 
-	tabletDevice = device_create(tabletClass, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
-	if (IS_ERR(tabletDevice)) {
-		class_destroy(tabletClass);
+	mouse_device = device_create(mouse_class, NULL, MKDEV(major_number, 0), NULL, DEVICE_NAME);
+	if (IS_ERR(mouse_device)) {
+		class_destroy(mouse_class);
 		unregister_chrdev(major_number, DEVICE_NAME);
 		printk(KERN_ALERT "Failed to create the device\n");
-		return PTR_ERR(tabletDevice);
+		return PTR_ERR(mouse_device);
 	}
 
+	init_proc();
+
 	printk(KERN_INFO "URB submitted successfully\n");
-	printk(KERN_INFO "Mouse driver - Probe executed AAAAAAAAAA\n");
+	printk(KERN_INFO "Mouse driver - Probe executed PPLEEEEEAAAAAAAAAASE\n");
 	return 0;
 }
 
-/* Disconnect function: cleans up URBs, input device, and character device */
-static void wacom_usb_disconnect(struct usb_interface *intf)
+/* 
+* mouse_usb_remove Cleans up usb device
+*
+* This is called when the usb is removed.
+*/
+static void mouse_usb_remove(struct hid_device *hdev)
 {
-
-	device_destroy(tabletClass, MKDEV(major_number, 0));
-	class_destroy(tabletClass);
+	exit_proc();
+	device_destroy(mouse_class, MKDEV(major_number, 0));
+	class_destroy(mouse_class);
 	unregister_chrdev(major_number, DEVICE_NAME);
 	printk(KERN_INFO "Mouse - Disconnect executed\n");
 }
 
-static struct usb_driver my_usb_driver = {
-	.name = "MouseDriver",
-	.id_table = my_usb_table,
-	.probe = wacom_usb_probe,
-	.disconnect = wacom_usb_disconnect,
-	.supports_autosuspend = 1,
+static struct hid_driver mouse_hid_driver = {
+	.name = "mouse_driver",
+	.id_table = mouse_hid_table,
+	.probe = mouse_usb_probe,
+	.remove = mouse_usb_remove,
 };
 
-static int __init wacom_init(void)
+static int __init mouse_init(void)
 {
-	int usb_result;
+	int hid_result;
 
-	init_proc();
-	usb_result = usb_register(&my_usb_driver);
-	if (usb_result) {
+	hid_result = hid_register_driver(&mouse_hid_driver);
+	if (hid_result) {
 		printk(KERN_ALERT "USB driver registration failed.\n");
 		return -EFAULT;
 	}
 	return 0;
 }
 
-static void __exit wacom_exit(void)
+/*
+* mouse_exit - Unregisters driver :)
+*/
+static void __exit mouse_exit(void)
 {
-	exit_proc();
-	usb_deregister(&my_usb_driver);
+
+	hid_unregister_driver(&mouse_hid_driver);
 	printk(KERN_INFO "Mouse device unregistered\n");
 }
 
-module_init(wacom_init);
-module_exit(wacom_exit);
+module_init(mouse_init);
+module_exit(mouse_exit);
