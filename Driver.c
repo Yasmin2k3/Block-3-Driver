@@ -30,6 +30,7 @@ static size_t buffer_data_size = 0;
 static struct proc_dir_entry *pentry = NULL;
 static struct class *mouse_class = NULL;
 static struct device *mouse_device = NULL;
+static struct input_dev *mouse_input;
 struct device_data {
 	struct cdev cdev;
 };
@@ -111,6 +112,55 @@ static struct hid_device_id mouse_hid_table[] = {
 };
 MODULE_DEVICE_TABLE(hid, mouse_hid_table);
 
+
+static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id *id){
+	int ret;
+
+	/* Start the HID device */
+    ret = hid_parse(hdev);
+    if (ret) {
+        printk(KERN_ERR "HID parse failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
+    if (ret) {
+        printk(KERN_ERR "HID hw start failed: %d\n", ret);
+        return ret;
+    }
+
+     /* Allocate and register an input device for the mouse */
+	mouse_input = input_allocate_device();
+	if (!mouse_input) {
+		printk(KERN_ERR "Failed to allocate input device\n");
+		return -ENOMEM;
+	}
+	mouse_input->name = "ISE-mouse";
+	mouse_input->phys = "ISE-mouse0";
+	mouse_input->id.bustype = BUS_USB;
+	mouse_input->id.vendor  = id->vendor;
+	mouse_input->id.product = id->product;
+	mouse_input->id.version = 0x0100;
+
+	/* Set capabilities: relative X/Y movement and buttons */
+	set_bit(EV_REL, mouse_input->evbit);
+	set_bit(REL_X, mouse_input->relbit);
+	set_bit(REL_Y, mouse_input->relbit);
+	set_bit(EV_KEY, mouse_input->evbit);
+	set_bit(BTN_LEFT, mouse_input->keybit);
+	set_bit(BTN_RIGHT, mouse_input->keybit);
+	set_bit(BTN_MIDDLE, mouse_input->keybit);
+
+	ret = input_register_device(mouse_input);
+	if (ret) {
+		input_free_device(mouse_input);
+		printk(KERN_ERR "Failed to register input device\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 /*
 * mouse_usb_probe Initializes  USB driver.
 *
@@ -121,7 +171,10 @@ static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *
 	int chrdev_result;
 	dev_t dev;
 
- //Dynamically allocates a region in memory for our character device.
+	//setup input controls - abstracted it for clarity.
+	mouse_input_init(hdev, id);
+
+ 	//Dynamically allocates a region in memory for our character device.
 	chrdev_result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
 	major_number = MAJOR(dev);
 	//Error handling
@@ -159,6 +212,51 @@ static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *
 	return 0;
 }
 
+/*
+* mouse_raw_event put description here
+*/
+static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
+{
+   int buttons;
+   int x_delta;
+   int y_delta;
+
+   // checking the report is not more than the expected size
+   if(size < 3){
+      return 0;
+   }
+
+   buttons = data[0];
+   x_delta = (int)((signed char)data[1]); // X movement
+   y_delta = (int)((signed char)data[2]); // Y movement
+
+   // reporting movement to input subsystem
+
+   input_report_rel(mouse_input, REL_X, x_delta);
+   input_report_rel(mouse_input, REL_Y, y_delta);
+   input_sync(mouse_input);
+
+   unsigned int available = BUFFER_SIZE- buffer_data_size;
+
+   // check if left button is pressed
+   if(buttons & (1 << 0)){
+
+      printk(KERN_INFO "Left Button Pressed\n");
+	  snprintf(buffer + buffer_data_size, available, "Left Button Pressed");
+   }
+
+   if(buttons & (1 << 1)){
+
+     printk(KERN_INFO "Right Button Pressed\n");
+   }
+   if(buttons & (1 << 2)){
+
+     printk(KERN_INFO "Middle button Pressed\n");
+   }
+    return 0;
+}
+
+
 /* 
 * mouse_usb_remove Cleans up usb device
 *
@@ -166,6 +264,8 @@ static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *
 */
 static void mouse_usb_remove(struct hid_device *hdev)
 {
+	hid_hw_stop(hdev);
+	input_unregister_device(mouse_input);
 	exit_proc();
 	device_destroy(mouse_class, MKDEV(major_number, 0));
 	class_destroy(mouse_class);
@@ -178,6 +278,7 @@ static struct hid_driver mouse_hid_driver = {
 	.id_table = mouse_hid_table,
 	.probe = mouse_usb_probe,
 	.remove = mouse_usb_remove,
+	.raw_event = mouse_raw_event,
 };
 
 static int __init mouse_init(void)
