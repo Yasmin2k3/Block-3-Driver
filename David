@@ -1,15 +1,15 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/fs.h>              // for device registration
-#include <linux/uaccess.h>         // copy_to_user
-#include <linux/proc_fs.h>         // proc file
+#include <linux/fs.h>              
+#include <linux/uaccess.h>         
+#include <linux/proc_fs.h>         
 #include <linux/device.h>
-#include <linux/input.h>           // input device handling
+#include <linux/input.h>           
 #include <linux/cdev.h>
-#include <linux/usb.h>            // for mutexes
-#include <linux/printk.h>         // for deferred work
-#include <linux/hid.h>            // for usbhid
+#include <linux/usb.h>            
+#include <linux/printk.h>         
+#include <linux/hid.h>            
 
 #define DEVICE_NAME "ISE_mouse_driver"
 #define BUFFER_SIZE 1024
@@ -39,12 +39,35 @@ static struct device_data dev_data;
 /* Mutex for protecting the log buffer in process context */
 static DEFINE_MUTEX(buffer_mutex);
 
-/* Button status tracking (for ioctl) */
+
+
+
+/* Global variable to track the button status for ioctl code. With this there will be 
+a status update whenever the mouse buttons are clicked*/
+
 static int button_status = 0; // 0: None, 1: Left, 2: Right, 3: Middle
 
-/* IOCTL commands */
+
+
+
+
+
+
+/* Here I define the ioctl commands. GET_BUTTON_STATUS reads the current button status from the driver while SET_BUTTON_STATUS writes the button status to the driver */
+
 #define IOCTL_GET_BUTTON_STATUS _IOR('M', 1, int)
 #define IOCTL_SET_BUTTON_STATUS _IOW('M', 2, int)
+
+/* The "M" is a unique identifier for the device type called a magic number. This helps differentiate this ioctl from those of other drivers 
+The 1 for GET and 2 for SET are command numbers. They point out the specific operation in the driver */
+
+
+
+
+
+
+
+
 
 /* Character device file operations */
 static int device_open(struct inode *inode, struct file *file)
@@ -85,6 +108,14 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
     return bytes_to_read;
 }
 
+
+
+
+
+/* If IOCTL_GET_BUTTON_STATUS is called, it copies the current button_status to user space.
+   If IOCTL_SET_BUTTON_STATUS is called, it updates button_status based on the user input.
+   If an unknown ioctl command is sent, it returns an error (-EINVAL). */
+
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     int ret = 0;
@@ -110,6 +141,13 @@ long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     return ret;
 }
 
+
+
+
+
+/*This code registers device_ioctl in file operations which allows user-space applications to call ioctl on /dev/ISE_mouse_driver */
+
+
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = device_open,
@@ -117,6 +155,12 @@ static struct file_operations fops = {
     .read = device_read,
     .unlocked_ioctl = device_ioctl,  // Add ioctl function
 };
+
+
+
+
+
+
 
 /* Proc file setup */
 static struct proc_ops pops = {};
@@ -264,6 +308,12 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
 
     unsigned int available = BUFFER_SIZE - buffer_data_size;
 
+
+
+
+/* This tracks button presses. When pressed button_status is updated */
+
+
     if (buttons & (1 << 0)) {
         printk(KERN_INFO "Left Button Pressed\n");
         snprintf(buffer + buffer_data_size, available, "Left Button Pressed");
@@ -279,6 +329,7 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
         printk(KERN_INFO "Middle button Pressed\n");
         button_status = 3; // Middle button pressed
     }
+
 
     return 0;
 }
