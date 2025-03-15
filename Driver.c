@@ -19,11 +19,11 @@
 #define DEVICE_PRODUCT_ID 0xc063
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Yasmin, David, Waleed, April, merged with deferred logging by Your Name");
+MODULE_AUTHOR("Yasmin, David, Waleed, April");
 MODULE_DESCRIPTION("Mouse Driver");
 MODULE_VERSION("1.0");
 
-/* Global variables */
+// Global variables 
 static int major_number;
 static char buffer[BUFFER_SIZE];
 static size_t buffer_data_size = 0;
@@ -37,34 +37,47 @@ struct device_data {
 static struct device_data dev_data;
 
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+
 //values to be tracked for the proc file
 static int left_mouse_clicked=0;
 static int right_mouse_clicked=0;
 
 
-/* Mutex for protecting the log buffer in process context */
+// Mutex for protecting the log buffer.
 static DEFINE_MUTEX(buffer_mutex);
 
-/* Button status tracking (for ioctl) */
-static int button_status = 0; // 0: None, 1: Left, 2: Right, 3: Middle
+/* Button status tracking (for ioctl)
+* 0: None, 1: Left, 2: Right, 3: Middle
+*/
+static int button_status = 0; 
 
-/* IOCTL commands */
+// IOCTL commands. M: unique identifier for 'magic number' device type to differentiate IOCTL.
+//Reads current button status from driver
 #define IOCTL_GET_BUTTON_STATUS _IOR('M', 1, int)
+//Writes button status to the driver
 #define IOCTL_SET_BUTTON_STATUS _IOW('M', 2, int)
 
-/* Character device file operations */
+/*
+* device_open logs when /dev/ISE_mouse_drive is open for reading
+*/
 static int device_open(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "Mouse device opened\n");
     return 0;
 }
 
+/*
+* device_release logs when /dev/ISE_mouse_driver has been read and is closed.
+*/
 static int device_release(struct inode *inode, struct file *file)
 {
     printk(KERN_INFO "Mouse device released\n");
     return 0;
 }
 
+/*
+* device_read reads from /dev/ISE_mouse_driver into user space.
+*/
 static ssize_t device_read(struct file *file, char __user *user_buffer,
                            size_t len, loff_t *offset)
 {
@@ -91,6 +104,14 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
     return bytes_to_read;
 }
 
+/*
+* device_ioctl copies and/or updates button_status.
+*
+* copies button_status to user space when IOCTL_GET_BUTTON_STATUS is called
+* updates user input when IOCTL_SET_BUTTON_STATUS is called
+*
+* returns -EINVAL if unknown command is sent.
+*/
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
     int ret = 0;
@@ -116,17 +137,19 @@ long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     return ret;
 }
 
+//Registers file operations for character device.
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = device_open,
     .release = device_release,
     .read = device_read,
-    .unlocked_ioctl = device_ioctl,  // Add ioctl function
+    .unlocked_ioctl = device_ioctl,
 };
 
-// Proc file setup
 
-// Read function
+/*
+* read_proc reads from proc file into user space
+*/
 static ssize_t read_proc(struct file *file, char __user *user_buf, size_t count, loff_t *pos) {
     char buf[128];
     int len = snprintf(buf, sizeof(buf), DEVICE_NAME "\nLeft Mouse Clicked: %d\n Right Mouse Clicked: %d\n", left_mouse_clicked, right_mouse_clicked);
@@ -134,7 +157,11 @@ static ssize_t read_proc(struct file *file, char __user *user_buf, size_t count,
     return simple_read_from_buffer(user_buf, count, pos, buf, len);
 }
 
-// Write function
+/*
+* write_proc writes to proc file
+* 
+* Stores how many times the left and right mouse buttons are clicked respectively.
+*/
 static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t count, loff_t *pos) {
     char buf[32];
     if (count > sizeof(buf) - 1)
@@ -154,12 +181,17 @@ static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t
     return count;
 }
 
+//Registers operations for proc file.
 static struct proc_ops pops = { 
     .proc_read = read_proc,
     .proc_write = write_proc,
 };
 
-
+/*
+* init_proc creates proc file in /proc file directory.
+*
+* returns -EFAULT if failed.
+*/
 static int init_proc(void)
 {
     pentry = proc_create(DEVICE_NAME, 0644, NULL, &pops);
@@ -171,6 +203,9 @@ static int init_proc(void)
     return 0;
 }
 
+/*
+* removes proc file in /proc file directory
+*/
 static void exit_proc(void)
 {
     proc_remove(pentry);
@@ -184,6 +219,11 @@ static struct hid_device_id mouse_hid_table[] = {
 };
 MODULE_DEVICE_TABLE(hid, mouse_hid_table);
 
+/*
+* mouse_input_init initializes input device for the mouse driver.
+* 
+* This could go in the probe but I've abstracted it for ease of reading.
+*/
 static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id *id)
 {
     int ret;
@@ -231,6 +271,9 @@ static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id 
     return 0;
 }
 
+/*
+* mouse_usb_probe initializes mouse device when the usb with matching product and vendor id is found.
+*/
 static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
     int chrdev_result;
@@ -272,6 +315,9 @@ static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *
     return 0;
 }
 
+/*
+* mouse_usb_remove cleans up everything when usb is no longer connected.
+*/
 static void mouse_usb_remove(struct hid_device *hdev)
 {
     hid_hw_stop(hdev);
@@ -283,6 +329,9 @@ static void mouse_usb_remove(struct hid_device *hdev)
     printk(KERN_INFO "Mouse - Disconnect executed\n");
 }
 
+/*
+* mouse_raw_event logs raw event input into /dev/ISE_mouse_driver
+*/
 static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
     int buttons;
@@ -322,6 +371,7 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     return 0;
 }
 
+//Initializes hid driver for mouse. Used HID rather than USB because this is more specific, and therefore USBHID doesnt automatically take control.
 static struct hid_driver mouse_hid_driver = {
     .name = "mouse_driver",
     .id_table = mouse_hid_table,
@@ -330,6 +380,12 @@ static struct hid_driver mouse_hid_driver = {
     .raw_event = mouse_raw_event,
 };
 
+
+/*
+* mouse_init registers our driver as a hid driver.
+* 
+* called with insmod.
+*/
 static int __init mouse_init(void)
 {
     int hid_result;
@@ -342,6 +398,11 @@ static int __init mouse_init(void)
     return 0;
 }
 
+/*
+* mouse_exit cleans up our driver.
+*
+* called with rmmod.
+*/
 static void __exit mouse_exit(void)
 {
     hid_unregister_driver(&mouse_hid_driver);
