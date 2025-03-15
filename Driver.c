@@ -37,6 +37,10 @@ struct device_data {
 static struct device_data dev_data;
 
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
+//values to be tracked for the proc file
+static int left_mouse_clicked=0;
+static int right_mouse_clicked=0;
+
 
 /* Mutex for protecting the log buffer in process context */
 static DEFINE_MUTEX(buffer_mutex);
@@ -120,8 +124,41 @@ static struct file_operations fops = {
     .unlocked_ioctl = device_ioctl,  // Add ioctl function
 };
 
-/* Proc file setup */
-static struct proc_ops pops = {};
+// Proc file setup
+
+// Read function
+static ssize_t read_proc(struct file *file, char __user *user_buf, size_t count, loff_t *pos) {
+    char buf[128];
+    int len = snprintf(buf, sizeof(buf), DEVICE_NAME "\nLeft Mouse Clicked: %d\n Right Mouse Clicked: %d\n", left_mouse_clicked, right_mouse_clicked);
+    
+    return simple_read_from_buffer(user_buf, count, pos, buf, len);
+}
+
+// Write function
+static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t count, loff_t *pos) {
+    char buf[32];
+    if (count > sizeof(buf) - 1)
+        return -EINVAL;
+
+    if (copy_from_user(buf, user_buf, count))
+        return -EFAULT;
+    //temp values to store
+    int new_lclick=0;
+    int new_rclick=0;
+    buf[count] = '\0';
+    //scans for two integers. Throws an error if less than two appear for whatever reason
+    if (sscanf(buf,"%d %d",&new_lclick,&new_rclick)!=2) // Convert user input to int
+        return -EINVAL;
+    left_mouse_clicked=new_lclick;
+    right_mouse_clicked=new_rclick;
+    return count;
+}
+
+static struct proc_ops pops = { 
+    .proc_read = read_proc,
+    .proc_write = write_proc,
+};
+
 
 static int init_proc(void)
 {
