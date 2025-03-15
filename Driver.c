@@ -331,6 +331,7 @@ static void mouse_usb_remove(struct hid_device *hdev)
 
 /*
 * mouse_raw_event logs raw event input into /dev/ISE_mouse_driver
+* TODO: put mutex around?
 */
 static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
