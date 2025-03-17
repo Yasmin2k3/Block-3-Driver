@@ -10,8 +10,8 @@
 #include <linux/usb.h>             // for mutexes
 #include <linux/hid.h>             // HID support
 #include <linux/workqueue.h>
-#include <linux/slab.h>					   // for kmalloc and kfree
-#include <linux/smp.h>						 // to verify multithreading works
+#include <linux/slab.h>		   // for kmalloc and kfree
+#include <linux/smp.h>		   // to verify multithreading works
 
 #define DEVICE_NAME "ISE_mouse_driver"
 #define BUFFER_SIZE 1024
@@ -64,15 +64,6 @@ struct mouse_event {
     struct work_struct work;
 };
 
-/*
- * device_open logs when /dev/ISE_mouse_driver is opened.
- */
-static int device_open(struct inode *inode, struct file *file)
-{
-    printk(KERN_INFO "Mouse device opened\n");
-    return 0;
-}
-
 //FILE OPERATION FUNCTIONS --------------------------------------------------------------------------------------------------------
 
 /*
@@ -80,19 +71,31 @@ static int device_open(struct inode *inode, struct file *file)
  */
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+    int ret = 0;
+    mutex_lock(&buffer_mutex);  
+
     switch (cmd) {
         case IOCTL_GET_BUTTON_STATUS:
-            if (copy_to_user((int *)arg, &button_status, sizeof(button_status)))
-                return -EFAULT;
+            ret = copy_to_user((int *)arg, &button_status, sizeof(button_status)) ? -EFAULT : 0;
             break;
         case IOCTL_SET_BUTTON_STATUS:
-            if (copy_from_user(&button_status, (int *)arg, sizeof(button_status)))
-                return -EFAULT;
+            ret = copy_from_user(&button_status, (int *)arg, sizeof(button_status)) ? -EFAULT : 0;
             break;
         default:
-            return -EINVAL;
+            ret = -EINVAL;
             break;
     }
+
+    mutex_unlock(&buffer_mutex); 
+    return ret;
+}
+
+/*
+ * device_open logs when /dev/ISE_mouse_driver is opened.
+ */
+static int device_open(struct inode *inode, struct file *file)
+{
+    printk(KERN_INFO "Mouse device opened\n");
     return 0;
 }
 
@@ -183,7 +186,7 @@ static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t
     if (sscanf(buf, "%d %d", &new_lclick, &new_rclick) != 2){
 				mutex_unlock(&buffer_mutex);
         return -EINVAL;
-		}
+    }
 
     left_mouse_clicked = new_lclick;
     right_mouse_clicked = new_rclick;
@@ -217,7 +220,9 @@ static int init_proc(void)
  */
 static void exit_proc(void)
 {
-    proc_remove(pentry);
+    if (pentry){
+	proc_remove(pentry);
+    }
     printk(KERN_INFO "Proc file /proc/%s removed\n", DEVICE_NAME);
 }
 
@@ -292,9 +297,15 @@ static int mouse_usb_probe(struct hid_device *hdev, const struct hid_device_id *
     int chrdev_result;
     dev_t dev;
 
-    mouse_input_init(hdev, id);
+    if (mouse_input_init(hdev, id)) {
+        return -EFAULT;
+    }
 
     chrdev_result = alloc_chrdev_region(&dev, 0, 1, DEVICE_NAME);
+    if(chrdev_result){
+	    return -EFAULT;
+    }
+	
     major_number = MAJOR(dev);
     if (major_number < 0) {
         printk(KERN_ALERT "Failed to register major number\n");
@@ -353,14 +364,16 @@ static void mouse_event_worker(struct work_struct *work)
     struct mouse_event *event = container_of(work, struct mouse_event, work);
     size_t required_space = strlen(event->message);
 
-    /* Debug: Log current thread and CPU information */
+    // Log current thread and CPU information into kernel for debugging
     printk(KERN_INFO "mouse_event_worker: PID=%d, CPU=%d processing event: %s",
            current->pid, smp_processor_id(), event->message);
 
     mutex_lock(&buffer_mutex);
     if ((BUFFER_SIZE - buffer_data_size) < required_space) {
         printk(KERN_INFO "mouse_event_worker: Buffer full, flushing buffer.\n");
-        buffer_data_size = 0;
+	mutex_unlock(&buffer_mutex);
+        kfree(event);
+	return;
     }
     memcpy(buffer + buffer_data_size, event->message, required_space);
     buffer_data_size += required_space;
@@ -377,7 +390,7 @@ static void mouse_event_worker(struct work_struct *work)
 static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
     int buttons, x_delta, y_delta;
-		struct mouse_event *event;
+    struct mouse_event *event;
 
     if (size < 3)
         return 0;
@@ -390,48 +403,49 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     input_report_rel(mouse_input, REL_Y, y_delta);
     input_sync(mouse_input);
 
-		if (x_delta != 0 || y_delta != 0) {
-        event = kmalloc(sizeof(*event), GFP_ATOMIC);
-        if (event) {
-            snprintf(event->message, sizeof(event->message),
-                     "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
-            INIT_WORK(&event->work, mouse_event_worker);
-            queue_work(mouse_wq, &event->work);
-            printk(KERN_INFO "mouse_raw_event: Queued mouse move event.\n");
-        }
+    event = kmalloc(sizeof(*event), GFP_ATOMIC);
+    //if kmalloc fails, return immediately to avoid memory leaks.
+    if(!event){
+	printk(KERN_ALERT "Failed to allocate memory for mouse input");
+	return -EFAULT;
+    }
+	
+    if (x_delta != 0 || y_delta != 0) {
+    	snprintf(event->message, sizeof(event->message), "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
+	INIT_WORK(&event->work, mouse_event_worker);
+    	//queues the current work event, if it fails, free the allocated memory of the event.
+    	if(!queue_work(mouse_wq, &event->work)){
+	    kfree(event);
+    	}
+    	printk(KERN_INFO "mouse_raw_event: Queued mouse move event.\n");
     }
 
     if (buttons & (1 << 0)) {
-        event = kmalloc(sizeof(*event), GFP_ATOMIC);
-        if (event) {
-            snprintf(event->message, sizeof(event->message),
-                     "Left Button Pressed\n");
-            INIT_WORK(&event->work, mouse_event_worker);
-            queue_work(mouse_wq, &event->work);
-            printk(KERN_INFO "mouse_raw_event: Queued left button event.\n");
-        }
+    	snprintf(event->message, sizeof(event->message), "Left Button Pressed\n");
+    	INIT_WORK(&event->work, mouse_event_worker);
+    	if(!queue_work(mouse_wq, &event->work)){
+	    kfree(event);
+    	}
+    	printk(KERN_INFO "mouse_raw_event: Queued left button event.\n");
+        
     }
 
     if (buttons & (1 << 1)) {
-        event = kmalloc(sizeof(*event), GFP_ATOMIC);
-        if (event) {
-            snprintf(event->message, sizeof(event->message),
-                     "Right Button Pressed\n");
-            INIT_WORK(&event->work, mouse_event_worker);
-            queue_work(mouse_wq, &event->work);
-            printk(KERN_INFO "mouse_raw_event: Queued right button event.\n");
-        }
+    	snprintf(event->message, sizeof(event->message), "Right Button Pressed\n");
+    	INIT_WORK(&event->work, mouse_event_worker);
+    	if(!queue_work(mouse_wq, &event->work)){
+	    kfree(event);
+    	}
+    	printk(KERN_INFO "mouse_raw_event: Queued right button event.\n");
     }
 
     if (buttons & (1 << 2)) {
-        event = kmalloc(sizeof(*event), GFP_ATOMIC);
-        if (event) {
-            snprintf(event->message, sizeof(event->message),
-                     "Middle Button Pressed\n");
-            INIT_WORK(&event->work, mouse_event_worker);
-            queue_work(mouse_wq, &event->work);
-            printk(KERN_INFO "mouse_raw_event: Queued middle button event.\n");
-        }
+    	snprintf(event->message, sizeof(event->message), "Middle Button Pressed\n");
+    	INIT_WORK(&event->work, mouse_event_worker);
+    	if(!queue_work(mouse_wq, &event->work)){
+	    kfree(event);
+    	}
+    	printk(KERN_INFO "mouse_raw_event: Queued middle button event.\n");
     }
     return 0;		
 }
