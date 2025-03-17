@@ -138,7 +138,7 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
     return bytes_to_read;
 }
 
-/* File operations for the character device. */
+// File operations for the character device
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = device_open,
@@ -149,6 +149,7 @@ static struct file_operations fops = {
 //-----------------------------------------------------------------------------------------------------------------------------------------------
 
 //PROC FILE FUNCTIONS ---------------------------------------------------------------------------------------------------------------------------
+
 /*
  * read_proc reads from proc file into user space.
  */
@@ -193,7 +194,7 @@ static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t
 		return count;
 }
 
-/* Proc file operations. */
+// Proc file operations.
 static struct proc_ops pops = { 
     .proc_read = read_proc,
     .proc_write = write_proc,
@@ -225,7 +226,8 @@ static void exit_proc(void)
 //-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 //HID DEVICE FUNCTIONS ----------------------------------------------------------------------------------------------------------------------------------------------
-/* HID device table. */
+
+// HID device table.
 static struct hid_device_id mouse_hid_table[] = {
     { HID_USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID) },
     { },
@@ -257,6 +259,7 @@ static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id 
         return -ENOMEM;
     }
 
+		//initializing mouse input device structure
     mouse_input->name = "ISE-mouse";
     mouse_input->phys = "ISE-mouse0";
     mouse_input->id.bustype = BUS_USB;
@@ -264,6 +267,7 @@ static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id 
     mouse_input->id.product = id->product;
     mouse_input->id.version = 0x0100;
 
+		//enables reporting of movement events and button clicks
     set_bit(EV_REL, mouse_input->evbit);
     set_bit(REL_X, mouse_input->relbit);
     set_bit(REL_Y, mouse_input->relbit);
@@ -343,7 +347,7 @@ static void mouse_usb_remove(struct hid_device *hdev)
 /*
  * mouse_event_worker runs in thread context.
  *
- * It appends the event's message to the global buffer.
+ * Appends the event's message to the global buffer.
  * Debug statements are added to log the current thread and CPU.
  */
 static void mouse_event_worker(struct work_struct *work)
@@ -434,7 +438,7 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     return 0;		
 }
 
-/* HID driver structure. */
+// HID driver structure.
 static struct hid_driver mouse_hid_driver = {
     .name = "mouse_driver",
     .id_table = mouse_hid_table,
