@@ -8,14 +8,13 @@
 #include <linux/input.h>           // input device handling
 #include <linux/cdev.h>
 #include <linux/usb.h>             // for mutexes
-#include <linux/printk.h>          // printk
 #include <linux/hid.h>             // HID support
-#include <linux/workqueue.h>       // workqueue support
-#include <linux/slab.h>            // kmalloc/kfree
+#include <linux/workqueue.h>
+#include <linux/slab.h>					   // for kmalloc and kfree
+#include <linux/smp.h>						 // to verify multithreading works
 
 #define DEVICE_NAME "ISE_mouse_driver"
 #define BUFFER_SIZE 1024
-#define URB_BUFFER_SIZE 64
 
 #define DEVICE_VENDOR_ID 0x046d
 #define DEVICE_PRODUCT_ID 0xc063
@@ -32,7 +31,7 @@ MODULE_VERSION("1.0");
 // Global variables 
 static int major_number;
 static char buffer[BUFFER_SIZE];
-static size_t buffer_data_size = 0;
+static size_t buffer_data_size;
 static struct proc_dir_entry *pentry = NULL;
 static struct class *mouse_class = NULL;
 static struct device *mouse_device = NULL;
@@ -45,8 +44,8 @@ static struct device_data dev_data;
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 // Values tracked for the proc file
-static int left_mouse_clicked = 0;
-static int right_mouse_clicked = 0;
+static int left_mouse_clicked;
+static int right_mouse_clicked;
 
 // Mutex for protecting the log buffer.
 static DEFINE_MUTEX(buffer_mutex);
@@ -54,54 +53,16 @@ static DEFINE_MUTEX(buffer_mutex);
 /* Button status tracking (for ioctl)
  * 0: None, 1: Left, 2: Right, 3: Middle
  */
-static int button_status = 0; 
+static int button_status; 
 
-/*
- * Structure to hold a mouse event.
- */
+// Workqueue for processing mouse events asynchronously
+static struct workqueue_struct *mouse_wq;
+
+// Structure for each mouse event work item
 struct mouse_event {
     char message[128];
     struct work_struct work;
 };
-
-/*
- * mouse_event_work_handler processes mouse events.
- *
- * Appends the event's message to the global log buffer.
- */
-static void mouse_event_work_handler(struct work_struct *work)
-{
-    struct mouse_event *event = container_of(work, struct mouse_event, work);
-
-    mutex_lock(&buffer_mutex);
-		//dunno what to put in here yet
-    mutex_unlock(&buffer_mutex);
-
-    kfree(event);
-}
-
-/*
- * Schedule a mouse event to be processed by the workqueue.
- */
-static void schedule_mouse_event(const char *fmt, ...)
-{
-    struct mouse_event *event;
-    va_list args;
-    int len;
-
-    event = kmalloc(sizeof(*event), GFP_KERNEL);
-    if (!event)
-        return; // allocation failure; drop the event
-
-    va_start(args, fmt);
-    len = vsnprintf(event->message, sizeof(event->message), fmt, args);
-    va_end(args);
-    /* Ensure null termination even if truncated */
-    event->message[sizeof(event->message) - 1] = '\0';
-
-    INIT_WORK(&event->work, mouse_event_work_handler);
-    queue_work(system_wq, &event->work);
-}
 
 /*
  * device_open logs when /dev/ISE_mouse_driver is opened.
@@ -112,6 +73,31 @@ static int device_open(struct inode *inode, struct file *file)
     return 0;
 }
 
+//IOCTL ---------------------------------------------------------------------------------------------------------------------------
+
+/*
+ * device_ioctl copies and/or updates button_status.
+ */
+long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+    switch (cmd) {
+        case IOCTL_GET_BUTTON_STATUS:
+            if (copy_to_user((int *)arg, &button_status, sizeof(button_status)))
+                return -EFAULT;
+            break;
+        case IOCTL_SET_BUTTON_STATUS:
+            if (copy_from_user(&button_status, (int *)arg, sizeof(button_status)))
+                return -EFAULT;
+            break;
+        default:
+            return -EINVAL;
+            break;
+    }
+    return 0;
+}
+//---------------------------------------------------------------------------------------------------------------------------------
+
+//FILE OPERATION FUNCTIONS --------------------------------------------------------------------------------------------------------
 /*
  * device_release logs when /dev/ISE_mouse_driver is closed.
  */
@@ -131,13 +117,7 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
     int ret;
 
     mutex_lock(&buffer_mutex);
-    bytes_to_read = min(len, buffer_data_size);
-
-		//TODO: move this somewhere else
-		//clear the buffer first if it will be full
-		if(bytes_to_read > BUFFER_SIZE - buffer_data_size){
-			buffer_data_size = 0;
-		}
+    bytes_to_read = min(len, buffer_data_size);	
 
     if (bytes_to_read == 0) {
         mutex_unlock(&buffer_mutex);
@@ -148,34 +128,14 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
         mutex_unlock(&buffer_mutex);
         return -EFAULT;
     }
+		// Shift remaining data to the beginning of the buffer to prevent bad address error
+    memmove(buffer, buffer + bytes_to_read, buffer_data_size - bytes_to_read);
     // Remove the data that was read
     buffer_data_size -= bytes_to_read;
     mutex_unlock(&buffer_mutex);
 
     printk(KERN_INFO "Mouse device read %zu bytes\n", bytes_to_read);
     return bytes_to_read;
-}
-
-/*
- * device_ioctl copies and/or updates button_status.
- */
-long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-    int ret = 0;
-    switch (cmd) {
-        case IOCTL_GET_BUTTON_STATUS:
-            if (copy_to_user((int *)arg, &button_status, sizeof(button_status)))
-                ret = -EFAULT;
-            break;
-        case IOCTL_SET_BUTTON_STATUS:
-            if (copy_from_user(&button_status, (int *)arg, sizeof(button_status)))
-                ret = -EFAULT;
-            break;
-        default:
-            ret = -EINVAL;
-            break;
-    }
-    return ret;
 }
 
 /* File operations for the character device. */
@@ -186,20 +146,27 @@ static struct file_operations fops = {
     .read = device_read,
     .unlocked_ioctl = device_ioctl,
 };
+//-----------------------------------------------------------------------------------------------------------------------------------------------
 
+//PROC FILE FUNCTIONS ---------------------------------------------------------------------------------------------------------------------------
 /*
  * read_proc reads from proc file into user space.
  */
 static ssize_t read_proc(struct file *file, char __user *user_buf, size_t count, loff_t *pos)
 {
     char buf[128];
-    int len = snprintf(buf, sizeof(buf), "%s\nLeft Mouse Clicked: %d\nRight Mouse Clicked: %d\n",
-                       DEVICE_NAME, left_mouse_clicked, right_mouse_clicked);
+
+		mutex_lock(&buffer_mutex);
+    int len = snprintf(buf, sizeof(buf), "%s\nLeft Mouse Clicked: %d\nRight Mouse Clicked: %d\n", DEVICE_NAME, left_mouse_clicked, right_mouse_clicked);
+		mutex_unlock(&buffer_mutex);
+
     return simple_read_from_buffer(user_buf, count, pos, buf, len);
 }
 
 /*
  * write_proc writes to proc file.
+ *
+ * only called when a userspace process writes to it  (i.e. echo).
  */
 static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t count, loff_t *pos)
 {
@@ -211,12 +178,19 @@ static ssize_t write_proc(struct file *file, const char __user *user_buf, size_t
     
     int new_lclick = 0, new_rclick = 0;
     buf[count] = '\0';
-    if (sscanf(buf, "%d %d", &new_lclick, &new_rclick) != 2)
+
+		//lock and unlock before modifying variables    
+    mutex_lock(&buffer_mutex);
+    if (sscanf(buf, "%d %d", &new_lclick, &new_rclick) != 2){
+				mutex_unlock(&buffer_mutex);
         return -EINVAL;
-    
+		}
+
     left_mouse_clicked = new_lclick;
     right_mouse_clicked = new_rclick;
-    return count;
+    mutex_unlock(&buffer_mutex);
+
+		return count;
 }
 
 /* Proc file operations. */
@@ -248,6 +222,9 @@ static void exit_proc(void)
     printk(KERN_INFO "Proc file /proc/%s removed\n", DEVICE_NAME);
 }
 
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+//HID DEVICE FUNCTIONS ----------------------------------------------------------------------------------------------------------------------------------------------
 /* HID device table. */
 static struct hid_device_id mouse_hid_table[] = {
     { HID_USB_DEVICE(DEVICE_VENDOR_ID, DEVICE_PRODUCT_ID) },
@@ -270,7 +247,7 @@ static int mouse_input_init(struct hid_device *hdev, const struct hid_device_id 
 
     ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
     if (ret) {
-        printk(KERN_ERR "HID hw start failed: %d\n", ret);
+        printk(KERN_ERR "HID start failed: %d\n", ret);
         return ret;
     }
 
@@ -362,6 +339,34 @@ static void mouse_usb_remove(struct hid_device *hdev)
     printk(KERN_INFO "Mouse - Disconnect executed\n");
 }
 
+//RAW EVENT AND MULTITHREADING----------------------------------------------------------------------------------------------------------------------------------------
+/*
+ * mouse_event_worker runs in thread context.
+ *
+ * It appends the event's message to the global buffer.
+ * Debug statements are added to log the current thread and CPU.
+ */
+static void mouse_event_worker(struct work_struct *work)
+{
+    struct mouse_event *event = container_of(work, struct mouse_event, work);
+    size_t required_space = strlen(event->message);
+
+    /* Debug: Log current thread and CPU information */
+    printk(KERN_INFO "mouse_event_worker: PID=%d, CPU=%d processing event: %s",
+           current->pid, smp_processor_id(), event->message);
+
+    mutex_lock(&buffer_mutex);
+    if ((BUFFER_SIZE - buffer_data_size) < required_space) {
+        printk(KERN_INFO "mouse_event_worker: Buffer full, flushing buffer.\n");
+        buffer_data_size = 0;
+    }
+    memcpy(buffer + buffer_data_size, event->message, required_space);
+    buffer_data_size += required_space;
+    mutex_unlock(&buffer_mutex);
+
+    kfree(event);
+}
+
 /*
  * mouse_raw_event called on each raw HID event.
  *
@@ -370,7 +375,7 @@ static void mouse_usb_remove(struct hid_device *hdev)
 static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
     int buttons, x_delta, y_delta;
-		size_t len;
+		struct mouse_event *event;
 
     if (size < 3)
         return 0;
@@ -383,34 +388,50 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     input_report_rel(mouse_input, REL_Y, y_delta);
     input_sync(mouse_input);
 
-    // Log mouse movement if there is any delta
-    if (x_delta != 0 || y_delta != 0) {
-        len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size,
-                       "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
-        if (len > 0)
-            buffer_data_size += len;
+		if (x_delta != 0 || y_delta != 0) {
+        event = kmalloc(sizeof(*event), GFP_ATOMIC);
+        if (event) {
+            snprintf(event->message, sizeof(event->message),
+                     "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
+            INIT_WORK(&event->work, mouse_event_worker);
+            queue_work(mouse_wq, &event->work);
+            printk(KERN_INFO "mouse_raw_event: Queued mouse move event.\n");
+        }
     }
 
     if (buttons & (1 << 0)) {
-    		len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Left Button Pressed\n");
-        if (len > 0)
-            buffer_data_size += len;       
-				button_status = 1;
-    }
-    if (buttons & (1 << 1)) {
-			  len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Right Button Pressed\n");
-        if (len > 0)
-            buffer_data_size += len;       
-        button_status = 2;
-    }
-    if (buttons & (1 << 2)) {
-			  len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Middle Button Pressed\n");
-        if (len > 0)
-            buffer_data_size += len;  
-        button_status = 3;
+        event = kmalloc(sizeof(*event), GFP_ATOMIC);
+        if (event) {
+            snprintf(event->message, sizeof(event->message),
+                     "Left Button Pressed\n");
+            INIT_WORK(&event->work, mouse_event_worker);
+            queue_work(mouse_wq, &event->work);
+            printk(KERN_INFO "mouse_raw_event: Queued left button event.\n");
+        }
     }
 
-    return 0;
+    if (buttons & (1 << 1)) {
+        event = kmalloc(sizeof(*event), GFP_ATOMIC);
+        if (event) {
+            snprintf(event->message, sizeof(event->message),
+                     "Right Button Pressed\n");
+            INIT_WORK(&event->work, mouse_event_worker);
+            queue_work(mouse_wq, &event->work);
+            printk(KERN_INFO "mouse_raw_event: Queued right button event.\n");
+        }
+    }
+
+    if (buttons & (1 << 2)) {
+        event = kmalloc(sizeof(*event), GFP_ATOMIC);
+        if (event) {
+            snprintf(event->message, sizeof(event->message),
+                     "Middle Button Pressed\n");
+            INIT_WORK(&event->work, mouse_event_worker);
+            queue_work(mouse_wq, &event->work);
+            printk(KERN_INFO "mouse_raw_event: Queued middle button event.\n");
+        }
+    }
+    return 0;		
 }
 
 /* HID driver structure. */
@@ -421,6 +442,7 @@ static struct hid_driver mouse_hid_driver = {
     .remove = mouse_usb_remove,
     .raw_event = mouse_raw_event,
 };
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 /*
  * mouse_init registers the HID driver.
@@ -429,12 +451,18 @@ static int __init mouse_init(void)
 {
     int hid_result;
 
+		mouse_wq = alloc_workqueue("mouse_wq", WQ_UNBOUND, 0);
+    if (!mouse_wq) {
+        printk(KERN_ERR "Failed to create workqueue\n");
+        return -ENOMEM;
+    }
+
     hid_result = hid_register_driver(&mouse_hid_driver);
     if (hid_result) {
         printk(KERN_ALERT "USB driver registration failed.\n");
         return -EFAULT;
     }
-    printk(KERN_INFO "Mouse driver initialised\n");
+		printk(KERN_INFO "Mouse driver initialised with workqueue\n");
     return 0;
 }
 
@@ -443,6 +471,9 @@ static int __init mouse_init(void)
  */
 static void __exit mouse_exit(void)
 {
+		flush_workqueue(mouse_wq);
+    destroy_workqueue(mouse_wq);
+    printk(KERN_INFO "Mouse driver exit: workqueue destroyed\n");
     hid_unregister_driver(&mouse_hid_driver);
     printk(KERN_INFO "Mouse device unregistered\n");
 }
