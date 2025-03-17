@@ -73,7 +73,7 @@ static int device_open(struct inode *inode, struct file *file)
     return 0;
 }
 
-//IOCTL ---------------------------------------------------------------------------------------------------------------------------
+//FILE OPERATION FUNCTIONS --------------------------------------------------------------------------------------------------------
 
 /*
  * device_ioctl copies and/or updates button_status.
@@ -95,9 +95,7 @@ long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     }
     return 0;
 }
-//---------------------------------------------------------------------------------------------------------------------------------
 
-//FILE OPERATION FUNCTIONS --------------------------------------------------------------------------------------------------------
 /*
  * device_release logs when /dev/ISE_mouse_driver is closed.
  */
