@@ -30,8 +30,6 @@ MODULE_VERSION("1.0");
 
 // Global variables 
 static int major_number;
-static char buffer[BUFFER_SIZE];
-static size_t buffer_data_size;
 static struct proc_dir_entry *pentry = NULL;
 static struct class *mouse_class = NULL;
 static struct device *mouse_device = NULL;
@@ -40,6 +38,11 @@ struct device_data {
     struct cdev cdev;
 };
 static struct device_data dev_data;
+
+//making a circular buffer since we will be reading frequently and we won't need old inputs for long
+static char buffer[BUFFER_SIZE];
+static size_t head;
+static size_t tail;
 
 long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
@@ -110,32 +113,56 @@ static int device_release(struct inode *inode, struct file *file)
 
 /*
  * device_read reads from /dev/ISE_mouse_driver into user space.
+ *
+ * Buffer wraps around if there's not enough room
+ * size_t first copies from head to the end of the buffer.
+ * size_t second copies the remaining bytes from the beginning of the buffer.
  */
 static ssize_t device_read(struct file *file, char __user *user_buffer,
                            size_t len, loff_t *offset)
 {
-    size_t bytes_to_read;
-    int ret;
+   size_t avail, bytes_to_read,  first, second;
+   int ret;
 
     mutex_lock(&buffer_mutex);
-    bytes_to_read = min(len, buffer_data_size);	
 
-    if (bytes_to_read == 0) {
+    // Calculate available bytes
+		if (tail >= head)
+        avail = tail - head;
+    else
+        avail = BUFFER_SIZE - head + tail;
+
+    if (avail == 0) {
         mutex_unlock(&buffer_mutex);
         return 0;
     }
-    ret = copy_to_user(user_buffer, buffer, bytes_to_read);
-    if (ret) {
-        mutex_unlock(&buffer_mutex);
-        return -EFAULT;
+
+    bytes_to_read = min(len, avail);
+    if (head + bytes_to_read <= BUFFER_SIZE) {
+        ret = copy_to_user(user_buffer, buffer + head, bytes_to_read);
+        if (ret) {
+            mutex_unlock(&buffer_mutex);
+            return -EFAULT;
+        }
+        head = (head + bytes_to_read) % BUFFER_SIZE;
+    } else {
+        first = BUFFER_SIZE - head;
+        ret = copy_to_user(user_buffer, buffer + head, first);
+        if (ret) {
+            mutex_unlock(&buffer_mutex);
+            return -EFAULT;
+        }
+        second = bytes_to_read - first;
+        ret = copy_to_user(user_buffer + first, buffer, second);
+        if (ret) {
+            mutex_unlock(&buffer_mutex);
+            return -EFAULT;
+        }
+        head = second;
     }
-		// Shift remaining data to the beginning of the buffer to prevent bad address error
-    memmove(buffer, buffer + bytes_to_read, buffer_data_size - bytes_to_read);
-    // Remove the data that was read
-    buffer_data_size -= bytes_to_read;
     mutex_unlock(&buffer_mutex);
 
-    printk(KERN_INFO "Mouse device read %zu bytes\n", bytes_to_read);
+    printk(KERN_INFO "device_read: read %zu bytes\n", bytes_to_read);
     return bytes_to_read;
 }
 
@@ -362,25 +389,40 @@ static void mouse_usb_remove(struct hid_device *hdev)
 static void mouse_event_worker(struct work_struct *work)
 {
     struct mouse_event *event = container_of(work, struct mouse_event, work);
-    size_t required_space = strlen(event->message);
 
-    // Log current thread and CPU information into kernel for debugging
-    printk(KERN_INFO "mouse_event_worker: PID=%d, CPU=%d processing event: %s",
+    size_t available, msg_len = strlen(event->message);
+
+		//kernel print statments for debugging to make sure threading is working
+		printk(KERN_INFO "mouse_event_worker: PID=%d, CPU=%d processing event: %s",
            current->pid, smp_processor_id(), event->message);
 
     mutex_lock(&buffer_mutex);
-    if ((BUFFER_SIZE - buffer_data_size) < required_space) {
-        printk(KERN_INFO "mouse_event_worker: Buffer full, flushing buffer.\n");
-	mutex_unlock(&buffer_mutex);
-        kfree(event);
-	return;
+
+    // calculate contiguous space available from the current tail
+    available = BUFFER_SIZE - tail;
+    if (available < msg_len) {
+        // If the message is larger than the entire buffer, truncate it
+				// not the most graceful solution but we aren't inputing large messages anyways
+        printk(KERN_INFO "mouse_event_worker: Not enough contiguous space; truncating message.\n");
+        msg_len = available;
     }
-    memcpy(buffer + buffer_data_size, event->message, required_space);
-    buffer_data_size += required_space;
+
+    memmove(buffer + tail, event->message, msg_len);
+		// Wrap around if we reach the end
+    tail = (tail + msg_len) % BUFFER_SIZE;  
     mutex_unlock(&buffer_mutex);
 
     kfree(event);
 }
+
+static struct mouse_event *alloc_mouse_event(void)
+{
+    struct mouse_event *ev = kmalloc(sizeof(*ev), GFP_ATOMIC);
+    if (!ev)
+        printk(KERN_ALERT "Failed to allocate memory for mouse input\n");
+    return ev;
+}
+
 
 /*
  * mouse_raw_event called on each raw HID event.
@@ -403,25 +445,29 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     input_report_rel(mouse_input, REL_Y, y_delta);
     input_sync(mouse_input);
 
-    event = kmalloc(sizeof(*event), GFP_ATOMIC);
-    //if kmalloc fails, return immediately to avoid memory leaks.
-    if(!event){
-	printk(KERN_ALERT "Failed to allocate memory for mouse input");
-	return -EFAULT;
-    }
-	
+   	
     if (x_delta != 0 || y_delta != 0) {
-    	snprintf(event->message, sizeof(event->message), "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
-	INIT_WORK(&event->work, mouse_event_worker);
+			event = alloc_mouse_event();
+			if (!event){
+    			return -EFAULT;
+			}
+			snprintf(event->message, sizeof(event->message), "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
+			INIT_WORK(&event->work, mouse_event_worker);
     	//queues the current work event, if it fails, free the allocated memory of the event.
     	if(!queue_work(mouse_wq, &event->work)){
-	    kfree(event);
+	    		kfree(event);
     	}
+
     	printk(KERN_INFO "mouse_raw_event: Queued mouse move event.\n");
     }
 
     if (buttons & (1 << 0)) {
+		  event = alloc_mouse_event();
+			if (!event){
+    			return -EFAULT;
+			}
     	snprintf(event->message, sizeof(event->message), "Left Button Pressed\n");
+			left_mouse_clicked++;
     	INIT_WORK(&event->work, mouse_event_worker);
     	if(!queue_work(mouse_wq, &event->work)){
 	    kfree(event);
@@ -431,7 +477,13 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     }
 
     if (buttons & (1 << 1)) {
+			event = alloc_mouse_event();
+			if (!event){
+    			return -EFAULT;
+			}
+	
     	snprintf(event->message, sizeof(event->message), "Right Button Pressed\n");
+			right_mouse_clicked++;
     	INIT_WORK(&event->work, mouse_event_worker);
     	if(!queue_work(mouse_wq, &event->work)){
 	    kfree(event);
@@ -440,6 +492,11 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     }
 
     if (buttons & (1 << 2)) {
+			event = alloc_mouse_event();
+			if (!event){
+    			return -EFAULT;
+			}
+
     	snprintf(event->message, sizeof(event->message), "Middle Button Pressed\n");
     	INIT_WORK(&event->work, mouse_event_worker);
     	if(!queue_work(mouse_wq, &event->work)){
@@ -475,6 +532,8 @@ static int __init mouse_init(void)
 
     hid_result = hid_register_driver(&mouse_hid_driver);
     if (hid_result) {
+				flush_workqueue(mouse_wq);
+    		destroy_workqueue(mouse_wq);
         printk(KERN_ALERT "USB driver registration failed.\n");
         return -EFAULT;
     }
