@@ -12,7 +12,6 @@
 #include <linux/hid.h>             // HID support
 #include <linux/workqueue.h>       // workqueue support
 #include <linux/slab.h>            // kmalloc/kfree
-#include <linux/stdarg.h>          // va_list
 
 #define DEVICE_NAME "ISE_mouse_driver"
 #define BUFFER_SIZE 1024
@@ -20,6 +19,10 @@
 
 #define DEVICE_VENDOR_ID 0x046d
 #define DEVICE_PRODUCT_ID 0xc063
+
+// IOCTL commands.
+#define IOCTL_GET_BUTTON_STATUS _IOR('M', 1, int)
+#define IOCTL_SET_BUTTON_STATUS _IOW('M', 2, int)
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Yasmin, David, Waleed, April");
@@ -53,39 +56,6 @@ static DEFINE_MUTEX(buffer_mutex);
  */
 static int button_status = 0; 
 
-// IOCTL commands.
-#define IOCTL_GET_BUTTON_STATUS _IOR('M', 1, int)
-#define IOCTL_SET_BUTTON_STATUS _IOW('M', 2, int)
-
-/*
- * Helper function: append_event
- *
- * Uses vsnprintf to write formatted events into the global buffer.
- * If there isn’t enough space, the buffer is flushed (cleared) before appending.
- * This function assumes the caller already holds the buffer_mutex.
- */
-static void append_event(const char *fmt)
-{
-    va_list args, args_copy;
-    int len;
-    int available = BUFFER_SIZE - buffer_data_size;
-
-    va_start(args, fmt);
-    va_copy(args_copy, args);
-    len = vsnprintf(buffer + buffer_data_size, available, fmt, args);
-    if (len >= available) {
-        // Flushes buffer if full
-        buffer_data_size = 0;
-        available = BUFFER_SIZE;
-        len = vsnprintf(buffer, available, fmt, args_copy);
-        buffer_data_size = len;
-    } else {
-        buffer_data_size += len;
-    }
-    va_end(args_copy);
-    va_end(args);
-}
-
 /*
  * Structure to hold a mouse event.
  */
@@ -95,15 +65,16 @@ struct mouse_event {
 };
 
 /*
- * Work handler for processing mouse events.
- * It appends the event's message to the global log buffer.
+ * mouse_event_work_handler processes mouse events.
+ *
+ * Appends the event's message to the global log buffer.
  */
 static void mouse_event_work_handler(struct work_struct *work)
 {
     struct mouse_event *event = container_of(work, struct mouse_event, work);
 
     mutex_lock(&buffer_mutex);
-    append_event("%s", event->message);
+		//dunno what to put in here yet
     mutex_unlock(&buffer_mutex);
 
     kfree(event);
@@ -161,6 +132,13 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
 
     mutex_lock(&buffer_mutex);
     bytes_to_read = min(len, buffer_data_size);
+
+		//TODO: move this somewhere else
+		//clear the buffer first if it will be full
+		if(bytes_to_read > BUFFER_SIZE - buffer_data_size){
+			buffer_data_size = 0;
+		}
+
     if (bytes_to_read == 0) {
         mutex_unlock(&buffer_mutex);
         return 0;
@@ -170,8 +148,7 @@ static ssize_t device_read(struct file *file, char __user *user_buffer,
         mutex_unlock(&buffer_mutex);
         return -EFAULT;
     }
-    /* Remove the data that was read */
-    memmove(buffer, buffer + bytes_to_read, buffer_data_size - bytes_to_read);
+    // Remove the data that was read
     buffer_data_size -= bytes_to_read;
     mutex_unlock(&buffer_mutex);
 
@@ -386,12 +363,14 @@ static void mouse_usb_remove(struct hid_device *hdev)
 }
 
 /*
- * mouse_raw_event is called on each raw HID event.
- * It now schedules work items for logging both mouse movement and button presses.
+ * mouse_raw_event called on each raw HID event.
+ *
+ * Schedules work items for logging both mouse movement and button presses.
  */
 static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u8 *data, int size)
 {
     int buttons, x_delta, y_delta;
+		size_t len;
 
     if (size < 3)
         return 0;
@@ -404,20 +383,30 @@ static int mouse_raw_event(struct hid_device *hdev, struct hid_report *report, u
     input_report_rel(mouse_input, REL_Y, y_delta);
     input_sync(mouse_input);
 
+    // Log mouse movement if there is any delta
     if (x_delta != 0 || y_delta != 0) {
-        schedule_mouse_event("Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
+        len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size,
+                       "Mouse moved: X=%d, Y=%d\n", x_delta, y_delta);
+        if (len > 0)
+            buffer_data_size += len;
     }
 
     if (buttons & (1 << 0)) {
-        schedule_mouse_event("Left Button Pressed\n");
-        button_status = 1;
+    		len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Left Button Pressed\n");
+        if (len > 0)
+            buffer_data_size += len;       
+				button_status = 1;
     }
     if (buttons & (1 << 1)) {
-        schedule_mouse_event("Right Button Pressed\n");
+			  len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Right Button Pressed\n");
+        if (len > 0)
+            buffer_data_size += len;       
         button_status = 2;
     }
     if (buttons & (1 << 2)) {
-        schedule_mouse_event("Middle Button Pressed\n");
+			  len = snprintf(buffer + buffer_data_size, BUFFER_SIZE - buffer_data_size, "Middle Button Pressed\n");
+        if (len > 0)
+            buffer_data_size += len;  
         button_status = 3;
     }
 
